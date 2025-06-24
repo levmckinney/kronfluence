@@ -45,12 +45,9 @@ class FSDPTest(unittest.TestCase):
 
         cls.task = GpuTestTask()
         cls.model = prepare_model(cls.model, cls.task)
-        cls.model.register_buffer("banana", torch.zeros(10, requires_grad=False))
         cls.model = apply_fsdp(
             model=cls.model,
-            local_rank=LOCAL_RANK,
-            rank=WORLD_RANK,
-            world_size=WORLD_SIZE,
+            sequential=cls.model,
         )
         if LOCAL_RANK == 0:
             print(cls.model)

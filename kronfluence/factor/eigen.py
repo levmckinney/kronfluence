@@ -7,7 +7,7 @@ from accelerate.utils import find_batch_size, send_to_device
 from accelerate.utils.memory import should_reduce_batch_size
 from safetensors.torch import load_file, save_file
 from torch import autocast, nn
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 from torch.utils import data
 from tqdm import tqdm
 
@@ -395,7 +395,7 @@ def fit_lambda_matrices_with_loader(
     num_data_processed = torch.zeros((1,), dtype=torch.int64, requires_grad=False)
     enable_amp = factor_args.amp_dtype is not None
     enable_grad_scaler = enable_amp and factor_args.amp_dtype == torch.float16
-    scaler = GradScaler(init_scale=factor_args.amp_scale, enabled=enable_grad_scaler)
+    scaler = GradScaler(device=state.device.type, init_scale=factor_args.amp_scale, enabled=enable_grad_scaler)
     if enable_grad_scaler:
         gradient_scale = 1.0 / scaler.get_scale()
         set_gradient_scale(model=model, gradient_scale=gradient_scale)

@@ -24,9 +24,9 @@ from kronfluence.utils.constants import (
     LAMBDA_FACTOR_NAMES,
     PAIRWISE_SCORE_MATRIX_NAME,
     PRECONDITIONED_GRADIENT_NAME,
-    PRECONDITIONED_GRADIENT_TYPE,
     SELF_SCORE_VECTOR_NAME,
 )
+from kronfluence.utils.sharded_storage import ShardedStorage, BufferConfig
 
 
 class ModuleMode(str, BaseEnum):
@@ -119,31 +119,33 @@ class TrackedModule(nn.Module):
 
         self.attention_mask: Optional[torch.Tensor] = None
         self.gradient_scale: float = 1.0
-        self.storage: Dict[str, Optional[Union[torch.Tensor, PRECONDITIONED_GRADIENT_TYPE]]] = {}
         self.einsum_path: Optional[List[int]] = None
+        self.storage: ShardedStorage = ShardedStorage()
         self._initialize_storage()
 
     def _initialize_storage(self) -> None:
         """Initializes storage for various factors and scores."""
+        shard_covariance = self.factor_args.shard_covariance
+        shard_lambda = self.factor_args.shard_lambda
 
         # Storage for activation and pseudo-gradient covariance matrices #
         for covariance_factor_name in COVARIANCE_FACTOR_NAMES:
-            self.storage[covariance_factor_name]: Optional[torch.Tensor] = None
+            self.storage.register_buffer(covariance_factor_name, BufferConfig(shard=shard_covariance))
 
         # Storage for eigenvectors and eigenvalues #
         for eigen_factor_name in EIGENDECOMPOSITION_FACTOR_NAMES:
-            self.storage[eigen_factor_name]: Optional[torch.Tensor] = None
+            self.storage.register_buffer(eigen_factor_name, BufferConfig(shard=shard_covariance))
 
         # Storage for lambda matrices #
         for lambda_factor_name in LAMBDA_FACTOR_NAMES:
-            self.storage[lambda_factor_name]: Optional[torch.Tensor] = None
+            self.storage.register_buffer(lambda_factor_name, BufferConfig(shard=shard_lambda))
 
         # Storage for preconditioned gradients and influence scores #
-        self.storage[AGGREGATED_GRADIENT_NAME]: Optional[torch.Tensor] = None
-        self.storage[PRECONDITIONED_GRADIENT_NAME]: PRECONDITIONED_GRADIENT_TYPE = None
-        self.storage[ACCUMULATED_PRECONDITIONED_GRADIENT_NAME]: PRECONDITIONED_GRADIENT_TYPE = None
-        self.storage[PAIRWISE_SCORE_MATRIX_NAME]: Optional[torch.Tensor] = None
-        self.storage[SELF_SCORE_VECTOR_NAME]: Optional[torch.Tensor] = None
+        self.storage.register_buffer(AGGREGATED_GRADIENT_NAME, BufferConfig(shard=False))
+        self.storage.register_buffer(PRECONDITIONED_GRADIENT_NAME, BufferConfig(shard=False))
+        self.storage.register_buffer(ACCUMULATED_PRECONDITIONED_GRADIENT_NAME, BufferConfig(shard=False))
+        self.storage.register_buffer(PAIRWISE_SCORE_MATRIX_NAME, BufferConfig(shard=False))
+        self.storage.register_buffer(SELF_SCORE_VECTOR_NAME, BufferConfig(shard=False))
 
     def forward(self, inputs: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
         """Performs a forward pass of the tracked module.
