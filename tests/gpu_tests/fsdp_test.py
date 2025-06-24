@@ -45,7 +45,7 @@ class FSDPTest(unittest.TestCase):
 
         cls.task = GpuTestTask()
         cls.model = prepare_model(cls.model, cls.task)
-
+        cls.model.register_buffer("banana", torch.zeros(10, requires_grad=False))
         cls.model = apply_fsdp(
             model=cls.model,
             local_rank=LOCAL_RANK,
@@ -177,4 +177,6 @@ class FSDPTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    # Set working directory to be the folder containing this file
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
     unittest.main()
