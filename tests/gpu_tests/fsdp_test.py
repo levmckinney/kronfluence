@@ -8,7 +8,7 @@ import torch
 import torch.distributed as dist
 from torch.utils import data
 
-from kronfluence.analyzer import Analyzer, prepare_model
+from kronfluence.analyzer import Analyzer
 from kronfluence.utils.common.factor_arguments import pytest_factor_arguments
 from kronfluence.utils.common.score_arguments import pytest_score_arguments
 from kronfluence.utils.constants import (
@@ -16,6 +16,7 @@ from kronfluence.utils.constants import (
     COVARIANCE_FACTOR_NAMES,
     LAMBDA_FACTOR_NAMES,
 )
+from kronfluence.module.utils import wrap_tracked_modules
 from kronfluence.utils.model import apply_fsdp
 from tests.gpu_tests.pipeline import GpuTestTask, construct_test_mlp, get_mnist_dataset
 from tests.gpu_tests.prepare_tests import QUERY_INDICES, TRAIN_INDICES
@@ -24,7 +25,7 @@ from tests.utils import ATOL, RTOL, check_tensor_dict_equivalence
 LOCAL_RANK = int(os.environ["LOCAL_RANK"])
 WORLD_RANK = int(os.environ["RANK"])
 WORLD_SIZE = int(os.environ["WORLD_SIZE"])
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 OLD_FACTOR_NAME = "single_gpu"
 NEW_FACTOR_NAME = "fsdp"
 OLD_SCORE_NAME = "single_gpu"
@@ -43,8 +44,14 @@ class FSDPTest(unittest.TestCase):
         cls.eval_dataset = get_mnist_dataset(split="valid", data_path="data")
         cls.eval_dataset = data.Subset(cls.eval_dataset, indices=list(range(QUERY_INDICES)))
 
+        cls.factor_args = pytest_factor_arguments()
+        cls.factor_args.shard_covariance = True
+        cls.factor_args.shard_eigendecomposition = True
+        cls.factor_args.shard_lambda = True
+
         cls.task = GpuTestTask()
-        cls.model = prepare_model(cls.model, cls.task)
+        
+        cls.model = wrap_tracked_modules(cls.model, cls.task)
         cls.model = apply_fsdp(
             model=cls.model,
             sequential=cls.model,
@@ -60,11 +67,10 @@ class FSDPTest(unittest.TestCase):
 
     def test_covariance_matrices(self) -> None:
         covariance_factors = self.analyzer.load_covariance_matrices(factors_name=OLD_FACTOR_NAME)
-        factor_args = pytest_factor_arguments()
         self.analyzer.fit_covariance_matrices(
             factors_name=NEW_FACTOR_NAME,
             dataset=self.train_dataset,
-            factor_args=factor_args,
+            factor_args=self.factor_args,
             per_device_batch_size=512,
             overwrite_output_dir=True,
         )
@@ -86,11 +92,10 @@ class FSDPTest(unittest.TestCase):
 
     def test_lambda_matrices(self) -> None:
         lambda_factors = self.analyzer.load_lambda_matrices(factors_name=OLD_FACTOR_NAME)
-        factor_args = pytest_factor_arguments()
         self.analyzer.fit_lambda_matrices(
             factors_name=NEW_FACTOR_NAME,
             dataset=self.train_dataset,
-            factor_args=factor_args,
+            factor_args=self.factor_args,
             per_device_batch_size=512,
             overwrite_output_dir=True,
             load_from_factors_name=OLD_FACTOR_NAME,

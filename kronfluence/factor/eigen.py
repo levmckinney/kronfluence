@@ -16,7 +16,7 @@ from kronfluence.module.tracked_module import ModuleMode
 from kronfluence.module.utils import (
     finalize_iteration,
     get_tracked_module_names,
-    load_factors,
+    load_factor_to_cpu,
     set_factors,
     set_gradient_scale,
     set_mode,
@@ -441,14 +441,13 @@ def fit_lambda_matrices_with_loader(
         num_data_processed = num_data_processed.cpu()
 
     saved_factors: FACTOR_TYPE = {}
-    if state.is_main_process:
-        for factor_name in LAMBDA_FACTOR_NAMES:
-            factor = load_factors(
-                model=model,
-                factor_name=factor_name,
-                tracked_module_names=tracked_module_names,
-                cpu=True,
-            )
+    for factor_name in LAMBDA_FACTOR_NAMES:
+        factor = load_factor_to_cpu(
+            model=model,
+            factor_name=factor_name,
+            tracked_module_names=tracked_module_names,
+        )
+        if state.is_main_process:
             if len(factor) == 0:
                 raise ValueError(f"Factor `{factor_name}` has not been computed.")
             saved_factors[factor_name] = factor

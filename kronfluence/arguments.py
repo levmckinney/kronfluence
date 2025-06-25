@@ -101,6 +101,10 @@ class FactorArguments(Arguments):
             "for numerical stability."
         },
     )
+    shard_eigendecomposition: bool = field(
+        default=False,
+        metadata={"help": "If `True`, shards the eigendecomposition across the model's modules (layers)."},
+    )
 
     # Configuration for fitting Lambda matrices #
     lambda_max_examples: Optional[int] = field(
