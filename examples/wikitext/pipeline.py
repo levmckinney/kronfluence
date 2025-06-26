@@ -5,9 +5,9 @@ import torch
 from datasets import load_dataset
 from torch import nn
 from torch.utils import data
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, GPT2LMHeadModel
+from kronfluence.utils.model import apply_fsdp
 from transformers.pytorch_utils import Conv1D
-
 
 @torch.no_grad()
 def replace_conv1d_modules(model: nn.Module) -> None:
@@ -39,6 +39,9 @@ def construct_gpt2() -> nn.Module:
     replace_conv1d_modules(model)
     return model
 
+
+def apply_fsdp_to_gpt2(model: GPT2LMHeadModel) -> nn.Module:
+    return apply_fsdp(model, sequential=model.transformer.h, cpu_offload=False)
 
 def get_wikitext_dataset(
     split: str,
