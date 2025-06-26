@@ -159,8 +159,9 @@ class LambdaTracker(BaseTracker):
 
     def _eigendecomposition_results_exist(self) -> bool:
         """Checks if eigendecomposition results are available."""
+        storage: ShardedStorage = self.module.storage
         for eigen_factor_name in EIGENDECOMPOSITION_FACTOR_NAMES:
-            if self.module.storage[eigen_factor_name] is None:
+            if not storage.is_initialized(eigen_factor_name):
                 return False
         return True
 
@@ -173,66 +174,63 @@ class LambdaTracker(BaseTracker):
         """
         batch_size = per_sample_gradient.size(0)
 
-        if self.module.storage[NUM_LAMBDA_PROCESSED] is None:
-            self.module.storage[NUM_LAMBDA_PROCESSED] = torch.zeros(
+        storage: ShardedStorage = self.module.storage
+        requires_eig = FactorConfig.CONFIGS[self.module.factor_args.strategy].requires_eigendecomposition_for_lambda
+
+        if not storage.is_initialized(NUM_LAMBDA_PROCESSED):
+            storage[NUM_LAMBDA_PROCESSED] = torch.zeros(
                 size=(1,),
                 dtype=torch.int64,
                 requires_grad=False,
             )
-            self.module.storage[LAMBDA_MATRIX_NAME] = torch.zeros(
+            storage[LAMBDA_MATRIX_NAME] = torch.zeros(
                 size=(per_sample_gradient.size(1), per_sample_gradient.size(2)),
                 dtype=per_sample_gradient.dtype,
                 device=per_sample_gradient.device,
                 requires_grad=False,
             )
 
-            if FactorConfig.CONFIGS[self.module.factor_args.strategy].requires_eigendecomposition_for_lambda:
+            if requires_eig:
                 if not self._eigendecomposition_results_exist():
                     raise FactorsNotFoundError(
                         f"The strategy {self.module.factor_args.strategy} requires eigendecomposition "
                         f"results for Lambda computations, but they are not found."
                     )
+            storage.dematerialize_all()
 
-                # Move activation and pseudo-gradient eigenvectors to appropriate devices.
-                self.module.storage[ACTIVATION_EIGENVECTORS_NAME] = self.module.storage[
-                    ACTIVATION_EIGENVECTORS_NAME
-                ].to(
-                    dtype=per_sample_gradient.dtype,
-                    device=per_sample_gradient.device,
-                )
-                self.module.storage[GRADIENT_EIGENVECTORS_NAME] = self.module.storage[GRADIENT_EIGENVECTORS_NAME].to(
-                    dtype=per_sample_gradient.dtype,
-                    device=per_sample_gradient.device,
-                )
+        storage[NUM_LAMBDA_PROCESSED].add_(batch_size)
 
-        self.module.storage[NUM_LAMBDA_PROCESSED].add_(batch_size)
-        if FactorConfig.CONFIGS[self.module.factor_args.strategy].requires_eigendecomposition_for_lambda:
+        if requires_eig:
+            storage.materialize_buffer(ACTIVATION_EIGENVECTORS_NAME) # TODO: Overlap communication with computation better!
+            storage.materialize_buffer(GRADIENT_EIGENVECTORS_NAME)
             if self.module.factor_args.use_iterative_lambda_aggregation:
                 # This batch-wise iterative update can be useful when the GPU memory is limited.
                 per_sample_gradient = torch.matmul(
                     per_sample_gradient,
-                    self.module.storage[ACTIVATION_EIGENVECTORS_NAME],
+                    storage[ACTIVATION_EIGENVECTORS_NAME],
                 )
                 for i in range(batch_size):
                     sqrt_lambda = torch.matmul(
-                        self.module.storage[GRADIENT_EIGENVECTORS_NAME].t(),
+                        storage[GRADIENT_EIGENVECTORS_NAME].t(),
                         per_sample_gradient[i],
                     )
-                    self.module.storage[LAMBDA_MATRIX_NAME].add_(sqrt_lambda.square_())
+                    storage.accumulate(LAMBDA_MATRIX_NAME, sqrt_lambda.square_())
             else:
                 per_sample_gradient = (
                     torch.matmul(
-                        self.module.storage[GRADIENT_EIGENVECTORS_NAME].t(),
-                        torch.matmul(per_sample_gradient, self.module.storage[ACTIVATION_EIGENVECTORS_NAME]),
+                        storage[GRADIENT_EIGENVECTORS_NAME].t(),
+                        torch.matmul(per_sample_gradient, storage[ACTIVATION_EIGENVECTORS_NAME]),
                     )
                     .square_()
                     .sum(dim=0)
                 )
-                self.module.storage[LAMBDA_MATRIX_NAME].add_(per_sample_gradient)
+                storage.accumulate(LAMBDA_MATRIX_NAME, per_sample_gradient)
+            storage.dematerialize_buffer(ACTIVATION_EIGENVECTORS_NAME)
+            storage.dematerialize_buffer(GRADIENT_EIGENVECTORS_NAME)
         else:
             # Approximate the eigenbasis as identity.
             per_sample_gradient = per_sample_gradient.square_().sum(dim=0)
-            self.module.storage[LAMBDA_MATRIX_NAME].add_(per_sample_gradient)
+            storage.accumulate(LAMBDA_MATRIX_NAME, per_sample_gradient)
 
     def register_hooks(self) -> None:
         """Sets up hooks to compute lambda matrices."""
@@ -308,19 +306,24 @@ class LambdaTracker(BaseTracker):
 
     def exist(self) -> bool:
         """Checks if Lambda matrices are available."""
+        storage: ShardedStorage = self.module.storage
         for lambda_factor_name in LAMBDA_FACTOR_NAMES:
-            if self.module.storage[lambda_factor_name] is None:
+            if not storage.is_initialized(lambda_factor_name):
                 return False
         return True
 
     def synchronize(self, num_processes: int) -> None:
         """Aggregates Lambda matrices across multiple devices or nodes in a distributed setting."""
         del num_processes
+        storage: ShardedStorage = self.module.storage
         if dist.is_initialized() and torch.cuda.is_available() and self.exist():
             for lambda_factor_name in LAMBDA_FACTOR_NAMES:
-                self.module.storage[lambda_factor_name] = self.module.storage[lambda_factor_name].cuda()
+                if storage.buffer_configs[lambda_factor_name].shard:
+                    continue # Already syncronized
+
+                storage[lambda_factor_name] = storage[lambda_factor_name].cuda()
                 dist.reduce(
-                    tensor=self.module.storage[lambda_factor_name],
+                    tensor=storage[lambda_factor_name],
                     op=dist.ReduceOp.SUM,
                     dst=0,
                 )

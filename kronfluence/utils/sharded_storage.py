@@ -184,7 +184,7 @@ class ShardedStorage:
                     placements=[Replicate()],
                 )
                 self.buffer_states[key] = BufferState.REPLICATED
-                self.unsharded_buffers[key] = replicated_tensor
+                self.unsharded_buffers[key] = replicated_tensor.to_local()
             case _:
                 raise ValueError(f"Invalid buffer state: {self.buffer_states[key]}")
 

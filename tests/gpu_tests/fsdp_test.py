@@ -122,7 +122,7 @@ class FSDPTest(unittest.TestCase):
         score_args = pytest_score_arguments()
         self.analyzer.compute_pairwise_scores(
             scores_name=NEW_SCORE_NAME,
-            factors_name=OLD_FACTOR_NAME,
+            factors_name=NEW_FACTOR_NAME,
             query_dataset=self.eval_dataset,
             train_dataset=self.train_dataset,
             train_indices=list(range(TRAIN_INDICES)),
@@ -152,7 +152,7 @@ class FSDPTest(unittest.TestCase):
         score_args = pytest_score_arguments()
         self.analyzer.compute_self_scores(
             scores_name=NEW_SCORE_NAME,
-            factors_name=OLD_FACTOR_NAME,
+            factors_name=NEW_FACTOR_NAME,
             train_dataset=self.train_dataset,
             train_indices=list(range(TRAIN_INDICES)),
             per_device_train_batch_size=512,

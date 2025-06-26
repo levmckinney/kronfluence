@@ -264,6 +264,7 @@ class TrackedModule(nn.Module):
             factor (Any):
                 The factor value to store.
         """
+        del self.storage[factor_name]
         if factor_name in self.storage:
             self.storage[factor_name] = factor
 

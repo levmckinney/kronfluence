@@ -53,7 +53,7 @@ def apply_ddp(
 
 def apply_fsdp(
     model: nn.Module,
-    sequential: nn.Sequential,
+    sequential: nn.Sequential | nn.ModuleList,
     cpu_offload: bool = True,
 ) -> FSDPModule:
     """Applies FSDP2 to the given PyTorch model.
