@@ -3,7 +3,7 @@ import logging
 from datetime import timedelta
 
 import torch
-from accelerate import Accelerator, InitProcessGroupKwargs
+from accelerate import Accelerator, InitProcessGroupKwargs, FullyShardedDataParallelPlugin
 from transformers import default_data_collator
 
 from examples.openwebtext.pipeline import construct_llama3, get_openwebtext_dataset
@@ -45,6 +45,12 @@ def parse_args():
         default=False,
         help="Boolean flag to profile computations.",
     )
+    parser.add_argument(
+        "--use_fsdp",
+        action="store_true",
+        default=False,
+        help="Boolean flag to use FSDP.",
+    )
     args = parser.parse_args()
 
     return args
@@ -80,12 +86,17 @@ def main():
 
     factors_name = args.factors_name
     factor_args = extreme_reduce_memory_factor_arguments(
-        strategy=args.factor_strategy, module_partitions=1, dtype=torch.bfloat16
+        strategy=args.factor_strategy, module_partitions=1, dtype=torch.float32
     )
     factor_args.covariance_module_partitions = 2
     factor_args.lambda_module_partitions = 4
-    factor_args.covariance_data_partitions = 4
-    factor_args.lambda_data_partitions = 4
+    factor_args.covariance_data_partitions = 1
+    factor_args.lambda_data_partitions = 1
+
+    factor_args.shard_covariance = args.use_fsdp
+    factor_args.shard_lambda = args.use_fsdp
+    factor_args.shard_eigendecomposition = args.use_fsdp
+
     analyzer.fit_all_factors(
         factors_name=factors_name,
         dataset=train_dataset,
