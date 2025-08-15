@@ -134,6 +134,7 @@ class ShardedStorage:
             self.buffer_states[key] = BufferState.NEEDS_SHARDING
         else:
             self.buffer_states[key] = BufferState.LOCAL
+            self.unsharded_buffers[key] = self.unsharded_buffers[key].to(self.state.device)
 
     def accumulate(self, key: str, value: Tensor) -> None:
         assert isinstance(value, Tensor), "Sharded storage only supports tensors."
