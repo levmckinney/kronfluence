@@ -74,7 +74,7 @@ class ShardedStorage:
     def __getitem__(self, key: str) -> list[Tensor] | Tensor | DTensor | None:
         if key not in self:
             raise KeyError(f"Buffer {key} is not registered.")
-        
+
         match self.buffer_states[key]:
             case BufferState.SHARDED:
                 raise ValueError(

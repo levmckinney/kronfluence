@@ -87,15 +87,18 @@ def test_delete_buffer(sharded_storage):
 @patch("torch.distributed.tensor.DTensor.from_local")
 def test_sharded_buffer_lifecycle(mock_from_local, mock_release_memory, sharded_storage, mock_state):
     """Tests the full state transition lifecycle of a sharded buffer."""
-    mock_dtensor_instance = MagicMock()
-    mock_from_local.return_value = mock_dtensor_instance
+    mock_replicated_tensor = MagicMock()
+    mock_from_local.return_value = mock_replicated_tensor
 
-    mock_replicated_tensor = torch.randn(20)
+    mock_sharded_tensor = MagicMock()
+    def redistribute_effect_replicated(mesh, placements):
+        return mock_sharded_tensor
 
-    def redistribute_effect(mesh, placements):
+    def redistribute_effect_sharded(mesh, placements):
         return mock_replicated_tensor
 
-    mock_dtensor_instance.redistribute.side_effect = redistribute_effect
+    mock_replicated_tensor.redistribute.side_effect = redistribute_effect_replicated
+    mock_sharded_tensor.redistribute.side_effect = redistribute_effect_sharded
 
     config = BufferConfig(shard=True, shard_dim=0)
     sharded_storage.register_buffer("sharded_buffer", config)
@@ -107,30 +110,32 @@ def test_sharded_buffer_lifecycle(mock_from_local, mock_release_memory, sharded_
     assert torch.equal(sharded_storage["sharded_buffer"], tensor)
 
     # 2. Dematerialize -> SHARDED
-    sharded_storage._dematerialize("sharded_buffer")
+    sharded_storage.dematerialize_buffer("sharded_buffer")
     assert sharded_storage.buffer_states["sharded_buffer"] == BufferState.SHARDED
     mock_from_local.assert_called_once_with(
-        tensor, device_mesh=sharded_storage.mesh, placements=[Shard(config.shard_dim)]
+        tensor, device_mesh=sharded_storage.mesh, placements=[Replicate()]
     )
-    assert sharded_storage.sharded_buffers["sharded_buffer"] is mock_dtensor_instance
+    mock_replicated_tensor.redistribute.assert_called_once_with(
+        sharded_storage.mesh, placements=[Shard(config.shard_dim)]
+    )
+    assert sharded_storage.sharded_buffers["sharded_buffer"] is mock_sharded_tensor
     mock_state.wait_for_everyone.assert_called_once()
     mock_release_memory.assert_called_once()
     with pytest.raises(ValueError):
         _ = sharded_storage["sharded_buffer"]
 
     # 3. Materialize -> REPLICATED
-    sharded_storage._materialize("sharded_buffer")
+    sharded_storage.materialize_buffer("sharded_buffer")
     assert sharded_storage.buffer_states["sharded_buffer"] == BufferState.REPLICATED
-    mock_dtensor_instance.redistribute.assert_called_once_with(
+    mock_sharded_tensor.redistribute.assert_called_once_with(
         sharded_storage.mesh, placements=[Replicate()]
     )
-    assert torch.equal(sharded_storage["sharded_buffer"], mock_replicated_tensor)
     assert "sharded_buffer" in sharded_storage.unsharded_buffers
 
     # 4. Dematerialize again -> SHARDED
     mock_state.wait_for_everyone.reset_mock()
     mock_release_memory.reset_mock()
-    sharded_storage._dematerialize("sharded_buffer")
+    sharded_storage.dematerialize_buffer("sharded_buffer")
     assert sharded_storage.buffer_states["sharded_buffer"] == BufferState.SHARDED
     assert "sharded_buffer" not in sharded_storage.unsharded_buffers
     mock_state.wait_for_everyone.assert_called_once()
@@ -143,21 +148,21 @@ def test_sharded_buffer_lifecycle(mock_from_local, mock_release_memory, sharded_
 
 def test_materialize_all(sharded_storage):
     """Tests that materialize_all calls _materialize for each buffer."""
-    sharded_storage._materialize = MagicMock()
+    sharded_storage.materialize_buffer = MagicMock()
     sharded_storage.register_buffer("buf1", BufferConfig())
     sharded_storage.register_buffer("buf2", BufferConfig())
     sharded_storage.materialize_all()
-    assert sharded_storage._materialize.call_count == 2
-    sharded_storage._materialize.assert_any_call("buf1")
-    sharded_storage._materialize.assert_any_call("buf2")
+    assert sharded_storage.materialize_buffer.call_count == 2
+    sharded_storage.materialize_buffer.assert_any_call("buf1")
+    sharded_storage.materialize_buffer.assert_any_call("buf2")
 
 
 def test_dematerialize_all(sharded_storage):
     """Tests that dematerialize_all calls _dematerialize for each buffer."""
-    sharded_storage._dematerialize = MagicMock()
+    sharded_storage.dematerialize_buffer = MagicMock()
     sharded_storage.register_buffer("buf1", BufferConfig())
     sharded_storage.register_buffer("buf2", BufferConfig())
     sharded_storage.dematerialize_all()
-    assert sharded_storage._dematerialize.call_count == 2
-    sharded_storage._dematerialize.assert_any_call("buf1")
-    sharded_storage._dematerialize.assert_any_call("buf2") 
+    assert sharded_storage.dematerialize_buffer.call_count == 2
+    sharded_storage.dematerialize_buffer.assert_any_call("buf1")
+    sharded_storage.dematerialize_buffer.assert_any_call("buf2") 

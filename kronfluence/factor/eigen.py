@@ -389,7 +389,7 @@ def fit_lambda_matrices_with_loader(
     )
     if eigen_factors is not None:
         for name in eigen_factors:
-            set_factors(model=model, factor_name=name, factors=eigen_factors[name], clone=True)
+            set_factors(model=model, factor_name=name, factors=eigen_factors[name], clone=True)  # TODO: clone=True shouldn't be needed
 
     total_steps = 0
     num_data_processed = torch.zeros((1,), dtype=torch.int64, requires_grad=False)
