@@ -49,7 +49,7 @@ class PreconditionTracker(BaseTracker):
         U, S, V = torch.svd_lowrank(preconditioned_gradient, q=rank)
         left_mat = torch.matmul(U, torch.diag_embed(S)).to(dtype=target_dtype)
         V = V.transpose(1, 2).to(dtype=target_dtype)
-        return [left_mat, V]
+        return [left_mat, V]  # TODO (lev): this should be a dataclass or a namedtuple.
 
     def _process_preconditioned_gradient(self, preconditioned_gradient: torch.Tensor) -> None:
         """Processes the preconditioned per-sample gradient.

@@ -2,25 +2,22 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from types import NoneType
 from torch import Tensor
-import torch
 from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.placement_types import Replicate, Shard, Partial
 from torch.distributed.tensor.device_mesh import DeviceMesh
 
+from torch.utils._pytree import PyTree, tree_map, tree_all
+
 from kronfluence.utils.state import State, release_memory
 
-class ReduceStratagy(Enum):
-    """Strategy for reducing a sharded buffer."""
-    NONE = "none"
-    ACCUMULATE = "accumulate"
 
 @dataclass(frozen=True, eq=True)
 class BufferConfig:
     """Configuration for a sharded buffer."""
     shard: bool = False
     shard_dim: int = 0
+
 
 class BufferState(Enum):
     """State of a sharded buffer."""
@@ -30,14 +27,18 @@ class BufferState(Enum):
     REPLICATED = "replicated"
     LOCAL = "local"
 
+
 class ShardedStorage:
     """Sharded storage for PyTorch tensors."""
 
     buffer_configs: dict[str, BufferConfig]
-    sharded_buffers: dict[str, DTensor]
-    unsharded_buffers: dict[str, Tensor | DTensor]
+    """Configuration for each buffer. Should only be set when a buffer is registered."""
+    sharded_buffers: dict[str, PyTree]
+    """Buffers that are currently sharded across the device mesh."""
+    unsharded_buffers: dict[str, PyTree]
+    """Buffers that are currently unsharded across the device mesh."""
     buffer_states: dict[str, BufferState]
-    materialized: bool = True
+    """State of each buffer."""
 
     def __init__(self, state: State | None = None, mesh: DeviceMesh | None = None):
         self.buffer_configs = {}
@@ -105,7 +106,7 @@ class ShardedStorage:
             release_memory()
             self.buffer_states[key] = BufferState.UNINITIALIZED
 
-    def __setitem__(self, key: str, value: Tensor | list[Tensor] | None):
+    def __setitem__(self, key: str, value: PyTree | None):
         if key not in self:
             raise KeyError(f"Buffer {key} is not registered.")
 
@@ -114,19 +115,15 @@ class ShardedStorage:
                     "We currently do not support setting a value to a sharded or replicated buffer. This is probably a mistake."
             )
 
-        if self.buffer_configs[key].shard and not isinstance(value, (NoneType, Tensor)):
-            raise ValueError("Sharded storage does not currently support setting a list of tensors.")
-
-
-
         # Delete buffer
-        assert not isinstance(value, DTensor), "Sharded storage only supports tensors."
         del self[key]
 
         # setting to None just deletes the buffer
         if value is None:
             return
 
+        assert tree_all(lambda x: isinstance(x, (Tensor,)), value), "Supports setting pytrees with tensors as leaves."
+    
         # Initialize buffer again
         self.unsharded_buffers[key] = value
 
@@ -134,30 +131,29 @@ class ShardedStorage:
             self.buffer_states[key] = BufferState.NEEDS_SHARDING
         else:
             self.buffer_states[key] = BufferState.LOCAL
-            self.unsharded_buffers[key] = self.unsharded_buffers[key].to(self.state.device)
+            self.unsharded_buffers[key] = tree_map(lambda x: x.to(self.state.device), self.unsharded_buffers[key])
 
-    def accumulate(self, key: str, value: Tensor) -> None:
-        assert isinstance(value, Tensor), "Sharded storage only supports tensors."
+    def accumulate(self, key: str, value: PyTree) -> None:
         if key not in self:
             raise KeyError(f"Buffer {key} is not registered.")
         
         match self.buffer_states[key]:
             case BufferState.LOCAL | BufferState.NEEDS_SHARDING:
-                self.unsharded_buffers[key].add_(value)
+                self.unsharded_buffers[key] = tree_map(lambda x, y: x.add_(y), self.unsharded_buffers[key], value)
             case BufferState.SHARDED:
                 sharded_tensor = self.sharded_buffers[key]
                 config = self.buffer_configs[key]
-                replicated_value = DTensor.from_local(
-                    value,
-                    device_mesh=sharded_tensor.device_mesh,
+                replicated_value = tree_map(lambda x: DTensor.from_local(
+                    x,
+                    device_mesh=self.mesh,
                     placements=[Partial(reduce_op='sum')],
-                )
-                sharded_value = replicated_value.redistribute(
+                ), value)
+                sharded_value = tree_map(lambda x: x.redistribute(
                     self.mesh,
                     placements=[Shard(config.shard_dim)],
-                )
-                sharded_tensor.add_(sharded_value)
-            
+                ), replicated_value)
+                self.sharded_buffers[key] = tree_map(lambda x, y: x.add_(y), sharded_tensor, sharded_value)
+
                 del replicated_value
                 del sharded_value
             case _:
@@ -180,12 +176,12 @@ class ShardedStorage:
                 return
             case BufferState.SHARDED:
                 sharded_tensor = self.sharded_buffers[key]
-                replicated_tensor = sharded_tensor.redistribute(
+                replicated_tensor = tree_map(lambda x: x.redistribute(
                     self.mesh,
                     placements=[Replicate()],
-                )
+                ), sharded_tensor)
                 self.buffer_states[key] = BufferState.REPLICATED
-                self.unsharded_buffers[key] = replicated_tensor.to_local()
+                self.unsharded_buffers[key] = tree_map(lambda x: x.to_local(), replicated_tensor)
             case _:
                 raise ValueError(f"Invalid buffer state: {self.buffer_states[key]}")
 
@@ -202,15 +198,16 @@ class ShardedStorage:
             case BufferState.NEEDS_SHARDING:
                 config = self.buffer_configs[key]
                 assert not isinstance(self.unsharded_buffers[key], DTensor), "Invariant violated!"
-                replicated_tensor = DTensor.from_local(
-                    self.unsharded_buffers[key],
+                replicated_tensor = tree_map(lambda x: DTensor.from_local(
+                    x,
                     device_mesh=self.mesh,
                     placements=[Replicate()],
-                )
-                sharded_tensor = replicated_tensor.redistribute(
+                ), self.unsharded_buffers[key])
+
+                sharded_tensor = tree_map(lambda x: x.redistribute(
                     self.mesh,
                     placements=[Shard(config.shard_dim)],
-                )
+                ), replicated_tensor)
                 del replicated_tensor
                 del self.unsharded_buffers[key]
                 self.state.wait_for_everyone()
