@@ -160,9 +160,8 @@ def test_delete_buffer_pytree(sharded_storage):
     assert sharded_storage.buffer_states["pytree_to_delete"] == BufferState.UNINITIALIZED
 
 
-@patch("kronfluence.utils.sharded_storage.release_memory")
 @patch("torch.distributed.tensor.DTensor.from_local")
-def test_sharded_buffer_lifecycle(mock_from_local, mock_release_memory, sharded_storage, mock_state):
+def test_sharded_buffer_lifecycle(mock_from_local, sharded_storage, mock_state):
     """Tests the full state transition lifecycle of a sharded buffer."""
     mock_replicated_tensor = MagicMock()
     mock_from_local.return_value = mock_replicated_tensor
@@ -197,7 +196,6 @@ def test_sharded_buffer_lifecycle(mock_from_local, mock_release_memory, sharded_
     )
     assert sharded_storage.sharded_buffers["sharded_buffer"] is mock_sharded_tensor
     mock_state.wait_for_everyone.assert_called_once()
-    mock_release_memory.assert_called_once()
     with pytest.raises(ValueError):
         _ = sharded_storage["sharded_buffer"]
 
@@ -211,21 +209,18 @@ def test_sharded_buffer_lifecycle(mock_from_local, mock_release_memory, sharded_
 
     # 4. Dematerialize again -> SHARDED
     mock_state.wait_for_everyone.reset_mock()
-    mock_release_memory.reset_mock()
     sharded_storage.dematerialize_buffer("sharded_buffer")
     assert sharded_storage.buffer_states["sharded_buffer"] == BufferState.SHARDED
     assert "sharded_buffer" not in sharded_storage.unsharded_buffers
     mock_state.wait_for_everyone.assert_called_once()
-    mock_release_memory.assert_called_once()
 
     # 5. Delete sharded buffer
     del sharded_storage["sharded_buffer"]
     assert not sharded_storage.is_initialized("sharded_buffer")
 
 
-@patch("kronfluence.utils.sharded_storage.release_memory")
 @patch("torch.distributed.tensor.DTensor.from_local")
-def test_sharded_pytree_lifecycle(mock_from_local, mock_release_memory, sharded_storage, mock_state):
+def test_sharded_pytree_lifecycle(mock_from_local, sharded_storage, mock_state):
     """Tests the full state transition lifecycle of a sharded PyTree buffer."""
     config = BufferConfig(shard=True, shard_dim=0)
     sharded_storage.register_buffer("sharded_pytree", config)
