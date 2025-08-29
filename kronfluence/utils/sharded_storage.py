@@ -9,7 +9,7 @@ from torch.distributed.tensor.device_mesh import DeviceMesh
 
 from torch.utils._pytree import PyTree, tree_map, tree_all
 
-from kronfluence.utils.state import State, release_memory
+from kronfluence.utils.state import State
 
 
 @dataclass(frozen=True, eq=True)
@@ -103,7 +103,6 @@ class ShardedStorage:
                 del self.sharded_buffers[key]
             if self.buffer_states[key] in [BufferState.SHARDED, BufferState.REPLICATED]:
                 self.state.wait_for_everyone()
-            release_memory()
             self.buffer_states[key] = BufferState.UNINITIALIZED
 
     def __setitem__(self, key: str, value: PyTree | None):
@@ -193,7 +192,6 @@ class ShardedStorage:
             case BufferState.REPLICATED:
                 del self.unsharded_buffers[key]
                 self.state.wait_for_everyone()
-                release_memory()
                 self.buffer_states[key] = BufferState.SHARDED
             case BufferState.NEEDS_SHARDING:
                 config = self.buffer_configs[key]
@@ -211,7 +209,6 @@ class ShardedStorage:
                 del replicated_tensor
                 del self.unsharded_buffers[key]
                 self.state.wait_for_everyone()
-                release_memory()
                 self.buffer_states[key] = BufferState.SHARDED
                 self.sharded_buffers[key] = sharded_tensor
 
