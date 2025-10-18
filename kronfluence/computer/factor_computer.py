@@ -305,7 +305,7 @@ class FactorComputer(Computer):
                         per_device_batch_size=per_device_batch_size,
                         dataloader_params=dataloader_params,
                         indices=list(range(start_index, end_index)),
-                        allow_duplicates=False,
+                        allow_duplicates=True,
                     )
                     num_data_processed, covariance_factors = fit_covariance_matrices_with_loader(
                         model=self.model,
@@ -662,7 +662,7 @@ class FactorComputer(Computer):
                         per_device_batch_size=per_device_batch_size,
                         dataloader_params=dataloader_params,
                         indices=list(range(start_index, end_index)),
-                        allow_duplicates=False,
+                        allow_duplicates=True,
                     )
                     num_data_processed, lambda_factors = fit_lambda_matrices_with_loader(
                         eigen_factors=eigen_factors,
