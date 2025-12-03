@@ -1,0 +1,4 @@
+model_size,phase,action,mean_duration_s,num_calls,total_duration_s,percentage,num_train_samples,num_eval_samples,train_batch_size
+0.5B,scores,Compute Pairwise Score,636.9279,1,636.9279,98.56,1000,100,32
+0.5B,scores,Load All Factors,9.266116,1,9.266116,1.43,1000,100,32
+0.5B,scores,Save Pairwise Score,0.045212,1,0.045212,0.01,1000,100,32
