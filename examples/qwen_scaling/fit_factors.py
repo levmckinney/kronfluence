@@ -10,7 +10,7 @@ from examples.qwen_scaling.pipeline import construct_model, get_openwebtext_data
 from examples.qwen_scaling.task import QwenLanguageModelingTask
 from examples.qwen_scaling.save_timing import save_timing_to_csv
 from kronfluence.analyzer import Analyzer, prepare_model
-from kronfluence.utils.common.factor_arguments import default_factor_arguments
+from kronfluence.utils.common.factor_arguments import smart_low_precision_factor_arguments
 from kronfluence.utils.dataset import DataLoaderKwargs
 
 torch.backends.cudnn.benchmark = True
@@ -130,8 +130,9 @@ def main():
     analyzer.set_dataloader_kwargs(dataloader_kwargs)
 
     factors_name = args.factors_name
-    factor_args = default_factor_arguments(
-        strategy=args.factor_strategy, module_partitions=1, dtype=torch.float32
+    factor_args = smart_low_precision_factor_arguments(
+        strategy=args.factor_strategy,
+        dtype=torch.bfloat16,
     )
     factor_args.covariance_module_partitions = 1
     factor_args.lambda_module_partitions = 1

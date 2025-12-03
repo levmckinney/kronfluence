@@ -26,8 +26,8 @@ def smart_low_precision_factor_arguments(
     """Creates factor arguments with low precision, except for Lambda computations."""
     factor_args = FactorArguments(strategy=strategy)
     factor_args.amp_dtype = dtype
-    factor_args.activation_covariance_dtype = dtype
-    factor_args.gradient_covariance_dtype = dtype
+    factor_args.activation_covariance_dtype = torch.float32
+    factor_args.gradient_covariance_dtype = torch.float32
     factor_args.per_sample_gradient_dtype = dtype
     factor_args.lambda_dtype = torch.float32
     return factor_args
