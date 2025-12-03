@@ -103,6 +103,7 @@ class PreconditionTracker(BaseTracker):
         def backward_hook(output_gradient: torch.Tensor) -> None:
             if self.cached_activations is None:
                 self._raise_cache_not_found_exception()
+            self.module.storage.materialize_all()
             handle = self.cached_hooks.pop()
             handle.remove()
             output_gradient = output_gradient.detach().to(dtype=self.module.score_args.per_sample_gradient_dtype)
@@ -121,6 +122,7 @@ class PreconditionTracker(BaseTracker):
                 preconditioned_gradient.mul_(self.module.gradient_scale)
             del per_sample_gradient
             self._process_preconditioned_gradient(preconditioned_gradient=preconditioned_gradient)
+            self.module.storage.dematerialize_all()
 
         @torch.no_grad()
         def shared_backward_hook(output_gradient: torch.Tensor) -> None:
@@ -143,6 +145,7 @@ class PreconditionTracker(BaseTracker):
     def finalize_iteration(self) -> None:
         """Computes preconditioned gradient using cached per-sample gradients."""
         if self.module.factor_args.has_shared_parameters:
+            self.module.storage.materialize_all()
             self.cached_per_sample_gradient = self.cached_per_sample_gradient.to(
                 dtype=self.module.score_args.precondition_dtype
             )
@@ -154,6 +157,7 @@ class PreconditionTracker(BaseTracker):
             if self.module.gradient_scale != 1.0:
                 preconditioned_gradient.mul_(self.module.gradient_scale)
             self._process_preconditioned_gradient(preconditioned_gradient=preconditioned_gradient)
+            self.module.storage.dematerialize_all()
         self.clear_all_cache()
 
     def exist(self) -> bool:
@@ -242,7 +246,8 @@ class PreconditionTracker(BaseTracker):
     @torch.no_grad()
     def finalize_all_iterations(self) -> None:
         """Preconditions aggregated gradient if it exists in storage."""
-        if self.module.storage[AGGREGATED_GRADIENT_NAME] is not None:
+        if self.module.storage.is_initialized(AGGREGATED_GRADIENT_NAME):
+            self.module.storage.materialize_all()
             self.module.storage[AGGREGATED_GRADIENT_NAME] = self.module.storage[AGGREGATED_GRADIENT_NAME].to(
                 dtype=self.module.score_args.precondition_dtype
             )
@@ -250,12 +255,13 @@ class PreconditionTracker(BaseTracker):
                 gradient=self.module.storage[AGGREGATED_GRADIENT_NAME],
                 storage=self.module.storage,
             )
-            self.module.storage[AGGREGATED_GRADIENT_NAME] = None
+            del self.module.storage[AGGREGATED_GRADIENT_NAME]
             self._process_preconditioned_gradient(preconditioned_gradient=preconditioned_gradient)
             self.accumulate_iterations()
+            self.module.storage.dematerialize_all()
 
     def release_memory(self) -> None:
         """Clears preconditioned gradients from memory."""
-        self.module.storage[ACCUMULATED_PRECONDITIONED_GRADIENT_NAME] = None
-        self.module.storage[PRECONDITIONED_GRADIENT_NAME] = None
+        del self.module.storage[ACCUMULATED_PRECONDITIONED_GRADIENT_NAME]
+        del self.module.storage[PRECONDITIONED_GRADIENT_NAME]
         self.clear_all_cache()

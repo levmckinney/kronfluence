@@ -194,11 +194,13 @@ class TrackedModule(nn.Module):
             device (torch.device):
                 The device to prepare the storage for.
         """
+        self.storage.materialize_all()
         FactorConfig.CONFIGS[self.factor_args.strategy].prepare(
             storage=self.storage,
             score_args=self.score_args,
             device=device,
         )
+        self.storage.dematerialize_all()
 
     def update_factor_args(self, factor_args: FactorArguments) -> None:
         """Updates the factor arguments.
@@ -267,6 +269,7 @@ class TrackedModule(nn.Module):
         del self.storage[factor_name]
         if factor_name in self.storage:
             self.storage[factor_name] = factor
+            self.storage.dematerialize_buffer(factor_name)
 
     def set_mode(self, mode: ModuleMode, release_memory: bool = False) -> None:
         """Sets the operating mode of the `TrackedModule`.

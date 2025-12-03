@@ -110,7 +110,7 @@ class PairwiseScoreTracker(BaseTracker):
 
     def exist(self) -> bool:
         """Checks if pairwise score is available."""
-        return self.module.storage[PAIRWISE_SCORE_MATRIX_NAME] is not None
+        return self.module.storage.is_initialized(PAIRWISE_SCORE_MATRIX_NAME)
 
     def accumulate_iterations(self) -> None:
         """Removes pairwise scores from memory after a single iteration."""
@@ -120,18 +120,18 @@ class PairwiseScoreTracker(BaseTracker):
     def finalize_all_iterations(self) -> None:
         """Removes cached preconditioned gradient from memory. Additionally, if aggregated gradients are available,
         computes the pairwise score using them."""
-        if self.module.storage[AGGREGATED_GRADIENT_NAME] is not None:
+        if self.module.storage.is_initialized(AGGREGATED_GRADIENT_NAME):
             self.module.storage[AGGREGATED_GRADIENT_NAME] = self.module.storage[AGGREGATED_GRADIENT_NAME].to(
                 dtype=self.module.score_args.score_dtype
             )
             self._compute_pairwise_score_with_gradient(
                 per_sample_gradient=self.module.storage[AGGREGATED_GRADIENT_NAME]
             )
-        self.module.storage[ACCUMULATED_PRECONDITIONED_GRADIENT_NAME] = None
-        self.module.storage[PRECONDITIONED_GRADIENT_NAME] = None
+        del self.module.storage[ACCUMULATED_PRECONDITIONED_GRADIENT_NAME]
+        del self.module.storage[PRECONDITIONED_GRADIENT_NAME]
         self.clear_all_cache()
 
     def release_memory(self) -> None:
         """Releases pairwise scores from memory."""
         self.clear_all_cache()
-        self.module.storage[PAIRWISE_SCORE_MATRIX_NAME] = None
+        del self.module.storage[PAIRWISE_SCORE_MATRIX_NAME]

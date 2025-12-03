@@ -3,7 +3,7 @@ from typing import Tuple
 import torch
 from torch import nn
 
-from kronfluence.factor.config import STORAGE_TYPE, FactorConfig
+from kronfluence.factor.config import FactorConfig
 from kronfluence.module.tracker.base import BaseTracker
 from kronfluence.utils.constants import (
     PRECONDITIONED_GRADIENT_NAME,
@@ -21,7 +21,7 @@ class SelfScoreTracker(BaseTracker):
             per_sample_gradient (torch.Tensor):
                 The per-sample gradient tensor for the given batch.
         """
-
+        self.module.storage.materialize_all()
         preconditioned_gradient = (
             FactorConfig.CONFIGS[self.module.factor_args.strategy]
             .precondition_gradient(
@@ -33,6 +33,7 @@ class SelfScoreTracker(BaseTracker):
         per_sample_gradient = per_sample_gradient.to(dtype=self.module.score_args.score_dtype)
         preconditioned_gradient.mul_(per_sample_gradient)
         self.module.storage[SELF_SCORE_VECTOR_NAME] = preconditioned_gradient.sum(dim=(1, 2))
+        self.module.storage.demateralize_all()
 
     def register_hooks(self) -> None:
         """Sets up hooks to compute self-influence scores."""
@@ -106,7 +107,7 @@ class SelfScoreTracker(BaseTracker):
 
     def exist(self) -> bool:
         """Checks if self-influence score is available."""
-        return self.module.storage[SELF_SCORE_VECTOR_NAME] is not None
+        return self.module.storage.is_initialized(SELF_SCORE_VECTOR_NAME)
 
     def accumulate_iterations(self) -> None:
         """Removes self-influence scores from memory after a single iteration."""
@@ -116,7 +117,6 @@ class SelfScoreTracker(BaseTracker):
         """Releases self-influence scores from memory."""
         self.clear_all_cache()
         del self.module.storage[SELF_SCORE_VECTOR_NAME]
-        self.module.storage[SELF_SCORE_VECTOR_NAME] = None
 
 
 class SelfScoreWithMeasurementTracker(BaseTracker):
@@ -201,7 +201,7 @@ class SelfScoreWithMeasurementTracker(BaseTracker):
 
     def exist(self) -> bool:
         """Checks if self-influence score is available."""
-        return self.module.storage[SELF_SCORE_VECTOR_NAME] is not None
+        return self.module.storage.is_initialized(SELF_SCORE_VECTOR_NAME)
 
     def accumulate_iterations(self) -> None:
         """Removes self-influence scores from memory after a single iteration."""
@@ -211,4 +211,3 @@ class SelfScoreWithMeasurementTracker(BaseTracker):
         """Releases self-influence scores from memory."""
         self.clear_all_cache()
         del self.module.storage[SELF_SCORE_VECTOR_NAME]
-        self.module.storage[SELF_SCORE_VECTOR_NAME] = None
