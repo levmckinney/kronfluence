@@ -31,12 +31,13 @@ def construct_model(model_size: str) -> nn.Module:
     device_map = "cuda" if torch.cuda.is_available() else "cpu"
     model_name = get_model_name(model_size)
     config = AutoConfig.from_pretrained(
-        model_name, trust_remote_code=True, torch_dtype=torch.bfloat16, device_map="auto"
+        model_name,
     )
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         config=config,
         device_map=device_map,
+        dtype=torch.bfloat16,
         ignore_mismatched_sizes=False,
     )
     return model

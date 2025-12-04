@@ -5,8 +5,8 @@
 # Uses accelerate launch with FSDP enabled
 
 # Configuration
-MODEL_SIZES=("14B")
-NUM_TRAIN_SAMPLES=500
+MODEL_SIZES=("32B"  "14B" "7B" "3B" "1.5B" "0.5B")
+NUM_TRAIN_SAMPLES=1000
 
 # Number of GPUs to use (adjust as needed)
 NUM_GPUS=${NUM_GPUS:-$(nvidia-smi -L | wc -l)}
@@ -20,6 +20,7 @@ BATCH_SIZES["1.5B"]="16 8 4 2"
 BATCH_SIZES["3B"]="8 4 2 1"
 BATCH_SIZES["7B"]="4 2 1"
 BATCH_SIZES["14B"]="2 1"
+BATCH_SIZES["32B"]="1"
 
 # Output directory for results
 OUTPUT_DIR="./batch_test_results"
