@@ -5,7 +5,7 @@
 # Uses accelerate launch with FSDP enabled
 
 # Configuration
-MODEL_SIZES=("1.5B 0.5B")
+MODEL_SIZES=("1.5B" "0.5B")
 NUM_TRAIN_SAMPLES=1000
 
 # Number of GPUs to use (adjust as needed)
