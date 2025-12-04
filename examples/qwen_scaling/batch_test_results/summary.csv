@@ -1,1 +1,2 @@
 model_size,batch_size,status,csv_file,error_message
+1.5B,16,SUCCESS,./batch_test_results/timing_factors_1.5B_bs16.csv,

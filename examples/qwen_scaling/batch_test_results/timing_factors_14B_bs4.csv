@@ -1,0 +1,9 @@
+model_size,phase,action,mean_duration_s,num_calls,total_duration_s,percentage,num_train_samples,factor_batch_size
+14B,factors,Perform Eigendecomposition,694.610315,1,694.610315,43.17,1000,4
+14B,factors,Fit Lambda,346.644017,1,346.644017,21.55,1000,4
+14B,factors,Save Covariance,184.344395,1,184.344395,11.46,1000,4
+14B,factors,Save Eigendecomposition,178.029988,1,178.029988,11.07,1000,4
+14B,factors,Fit Covariance,146.813783,1,146.813783,9.12,1000,4
+14B,factors,Save Lambda,58.460783,1,58.460783,3.63,1000,4
+14B,factors,Load Eigendecomposition,0.008857,1,0.008857,0.0,1000,4
+14B,factors,Load Covariance,0.00866,1,0.00866,0.0,1000,4

@@ -95,13 +95,13 @@ def plot_timing_by_phase(df: pd.DataFrame, output_file: str = "timing_by_phase.p
         output_file: Output filename for the figure
     """
     # Initialize plotting with three columns
-    init_plotting(nrows=1, ncols=3, column='full', usetex=False)
+    init_plotting(nrows=1, ncols=3, column='full', usetex=True)
 
     # Create figure with three subplots
-    fig, axes = plt.subplots(1, 3, figsize=(12, 3))
+    fig, axes = plt.subplots(1, 3)
 
     # Define the three phases to plot
-    phases = ['Fit Covariance', 'Fit Lambda', 'Perform Eigendecomposition']
+    phases = [r'Fit Covariances $\mathbf{S}$ and $\mathbf{A}$', r'Perform Eigendecomposition', r'Fit Eigenvalue Correction $\Lambda$']
 
     # Get unique batch sizes sorted
     batch_sizes = sorted(df['factor_batch_size'].unique())
