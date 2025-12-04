@@ -60,7 +60,6 @@ test_model_batch() {
         --factors_name "$factors_name" \
         --num_train_samples "$NUM_TRAIN_SAMPLES" \
         --factor_batch_size "$batch_size" \
-        --use_fsdp \
         --output_csv "$csv_file" 2>&1 | tee -a "$LOG_FILE"; then
 
         echo "SUCCESS: Model=$model_size, Batch=$batch_size" | tee -a "$LOG_FILE"
