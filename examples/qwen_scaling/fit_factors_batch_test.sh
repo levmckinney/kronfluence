@@ -5,7 +5,7 @@
 # Uses accelerate launch with FSDP enabled
 
 # Configuration
-MODEL_SIZES=("1.5B" "0.5B")
+MODEL_SIZES=("0.5B" "1.5B" "3B")
 NUM_TRAIN_SAMPLES=1000
 
 # Number of GPUs to use (adjust as needed)
@@ -15,9 +15,9 @@ echo "Detected $NUM_GPUS GPUs"
 # Batch sizes to test for each model (from largest to smallest)
 # Starting with larger batches and working down to find what fits
 declare -A BATCH_SIZES
-BATCH_SIZES["0.5B"]="16 8 4"
-BATCH_SIZES["1.5B"]="4"
-BATCH_SIZES["3B"]="32 16"
+BATCH_SIZES["0.5B"]="32 16 8 4 2"
+BATCH_SIZES["1.5B"]="16 8 4 2 1"
+BATCH_SIZES["3B"]="16 8 4 2 1"
 BATCH_SIZES["7B"]="16 8"
 BATCH_SIZES["14B"]="8 4"
 BATCH_SIZES["32B"]="1"
