@@ -103,9 +103,12 @@ def plot_timing_by_phase(df: pd.DataFrame, output_file: str = "timing_by_phase.p
     # Define the three phases to plot
     phases = ['Fit Covariance', 'Fit Lambda', 'Perform Eigendecomposition']
 
-    # Get unique batch sizes and create color palette
+    # Get unique batch sizes sorted
     batch_sizes = sorted(df['factor_batch_size'].unique())
-    colors = sns.color_palette("husl", n_colors=len(batch_sizes))
+
+    # Define colors
+    primary_color = '#2E86AB'  # Blue for the performance frontier (best times)
+    grey_color = '#808080'  # Grey for slower batch sizes
 
     for idx, phase in enumerate(phases):
         ax = axes[idx]
@@ -113,23 +116,51 @@ def plot_timing_by_phase(df: pd.DataFrame, output_file: str = "timing_by_phase.p
         # Filter data for this phase
         phase_df = df[df['action'] == phase].copy()
 
-        # Plot for each batch size
-        for bs_idx, batch_size in enumerate(batch_sizes):
+        # First, plot all data points as grey dots (slower configurations)
+        for batch_size in batch_sizes:
             bs_df = phase_df[phase_df['factor_batch_size'] == batch_size]
 
             if len(bs_df) > 0:
-                # Sort by model size for proper line plotting
+                # Sort by model size for proper plotting
                 bs_df = bs_df.sort_values('model_size_numeric')
 
+                # Plot all points as grey dots
                 ax.plot(
                     bs_df['model_size_numeric'],
                     bs_df['mean_duration_s'],
                     marker='o',
-                    label=f'Batch Size {batch_size}',
-                    color=colors[bs_idx],
-                    linewidth=1.5,
-                    markersize=6
+                    color=grey_color,
+                    linewidth=0,
+                    markersize=5,
+                    alpha=0.5,
+                    zorder=5,
+                    linestyle='None'
                 )
+
+        # Now plot the performance frontier (best time for each model size)
+        # Group by model size and find the minimum time for each
+        model_sizes_sorted = sorted(phase_df['model_size_numeric'].unique())
+        best_times = []
+        best_model_sizes = []
+
+        for model_size in model_sizes_sorted:
+            model_data = phase_df[phase_df['model_size_numeric'] == model_size]
+            best_time = model_data['mean_duration_s'].min()
+            best_times.append(best_time)
+            best_model_sizes.append(model_size)
+
+        # Plot the performance frontier as a solid blue line
+        ax.plot(
+            best_model_sizes,
+            best_times,
+            marker='o',
+            color=primary_color,
+            linewidth=2.0,
+            markersize=6,
+            alpha=1.0,
+            zorder=10,
+            linestyle='-'
+        )
 
         # Set labels and title
         ax.set_xlabel('Model Size (B Parameters)')
@@ -141,10 +172,6 @@ def plot_timing_by_phase(df: pd.DataFrame, output_file: str = "timing_by_phase.p
 
         # Add grid
         ax.grid(True, alpha=0.3, linestyle='--')
-
-        # Add legend
-        if idx == 2:  # Only add legend to the rightmost plot
-            ax.legend(loc='upper left', fontsize=8)
 
     # Adjust layout
     plt.tight_layout()

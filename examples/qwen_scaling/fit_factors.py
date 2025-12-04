@@ -6,7 +6,7 @@ import torch
 from accelerate import Accelerator, InitProcessGroupKwargs
 from transformers import default_data_collator
 
-from examples.qwen_scaling.pipeline import construct_model, get_openwebtext_dataset, QWEN_MODELS
+from examples.qwen_scaling.pipeline import construct_model, get_openwebtext_dataset, QWEN_MODELS, apply_fsdp_to_model
 from examples.qwen_scaling.task import QwenLanguageModelingTask
 from examples.qwen_scaling.save_timing import save_timing_to_csv
 from kronfluence.analyzer import Analyzer, prepare_model
@@ -95,6 +95,19 @@ def parse_args():
 def main():
     args = parse_args()
     logging.basicConfig(level=logging.INFO)
+    kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=5400))  # 1.5 hours
+    accelerator = Accelerator(kwargs_handlers=[kwargs])
+
+    # Prepare the model
+    model = construct_model(args.model_size)
+    num_layers = model.config.num_hidden_layers
+    logging.info(f"Model has {num_layers} layers")
+
+    # Define task and prepare model
+    task = QwenLanguageModelingTask(num_layers=num_layers)
+
+    model = prepare_model(model, task)
+    model = apply_fsdp_to_model(model)
 
     logging.info(f"Running factor computation for Qwen 2.5 {args.model_size}")
 
@@ -104,19 +117,6 @@ def main():
         num_samples=args.num_train_samples,
     )
     logging.info(f"Training dataset size: {len(train_dataset)}")
-
-    # Prepare the model
-    model = construct_model(args.model_size)
-    num_layers = model.config.num_hidden_layers
-    logging.info(f"Model has {num_layers} layers")
-
-    # Define task and prepare model
-    task = QwenLanguageModelingTask(num_layers=num_layers)
-    model = prepare_model(model, task)
-
-    kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=5400))  # 1.5 hours
-    accelerator = Accelerator(kwargs_handlers=[kwargs])
-    model = accelerator.prepare_model(model)
 
     analyzer = Analyzer(
         analysis_name=f"qwen_scaling_{args.model_size.lower()}",
