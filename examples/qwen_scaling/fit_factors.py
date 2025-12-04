@@ -95,6 +95,7 @@ def parse_args():
 def main():
     args = parse_args()
     logging.basicConfig(level=logging.INFO)
+
     kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=5400))  # 1.5 hours
     accelerator = Accelerator(kwargs_handlers=[kwargs])
 
@@ -107,7 +108,9 @@ def main():
     task = QwenLanguageModelingTask(num_layers=num_layers)
 
     model = prepare_model(model, task)
-    model = apply_fsdp_to_model(model)
+
+    if args.use_fsdp:
+        model = apply_fsdp_to_model(model)
 
     logging.info(f"Running factor computation for Qwen 2.5 {args.model_size}")
 
