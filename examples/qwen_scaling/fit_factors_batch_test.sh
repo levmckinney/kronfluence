@@ -4,10 +4,8 @@
 # Generates CSV files with timing results for successful runs
 # Uses accelerate launch with FSDP enabled
 
-set -e  # Exit on error (but we'll handle errors per-run)
-
 # Configuration
-MODEL_SIZES=("0.5B" "1.5B" "3B" "7B" "14B" "32B")
+MODEL_SIZES=("7B" "14B" "32B")
 NUM_TRAIN_SAMPLES=500
 
 # Number of GPUs to use (adjust as needed)
@@ -42,28 +40,7 @@ echo "Configuration:" | tee -a "$LOG_FILE"
 echo "  - Using accelerate launch with $NUM_GPUS GPU(s)" | tee -a "$LOG_FILE"
 echo "  - FSDP enabled: Yes" | tee -a "$LOG_FILE"
 echo "  - Training samples: $NUM_TRAIN_SAMPLES" | tee -a "$LOG_FILE"
-echo "  - Cache cleanup: Enabled (before/after each run)" | tee -a "$LOG_FILE"
 echo "----------------------------------------" | tee -a "$LOG_FILE"
-
-# Function to clean up cached factors/analysis directories
-cleanup_cache() {
-    local model_size=$1
-    local analysis_name="qwen_scaling_${model_size,,}"  # Convert to lowercase
-
-    echo "Cleaning up cached data for $model_size..." | tee -a "$LOG_FILE"
-
-    # Remove analysis directory if it exists
-    if [ -d "$analysis_name" ]; then
-        echo "  Removing directory: $analysis_name" | tee -a "$LOG_FILE"
-        rm -rf "$analysis_name"
-    fi
-
-    # Also remove any .kronfluence directories that might exist
-    if [ -d ".kronfluence/$analysis_name" ]; then
-        echo "  Removing directory: .kronfluence/$analysis_name" | tee -a "$LOG_FILE"
-        rm -rf ".kronfluence/$analysis_name"
-    fi
-}
 
 # Function to test a specific model size and batch size
 test_model_batch() {
@@ -76,8 +53,6 @@ test_model_batch() {
     echo "Testing: Model=$model_size, Batch=$batch_size" | tee -a "$LOG_FILE"
     echo "----------------------------------------" | tee -a "$LOG_FILE"
 
-    # Clean up any cached data from previous runs
-    cleanup_cache "$model_size"
 
     # Run the factor fitting with accelerate launch and FSDP
     if accelerate launch --num_processes="$NUM_GPUS" -m examples.qwen_scaling.fit_factors \
@@ -91,8 +66,6 @@ test_model_batch() {
         echo "SUCCESS: Model=$model_size, Batch=$batch_size" | tee -a "$LOG_FILE"
         echo "$model_size,$batch_size,SUCCESS,$csv_file," >> "$SUMMARY_FILE"
 
-        # Clean up after successful run to save disk space
-        cleanup_cache "$model_size"
         return 0
     else
         local exit_code=$?
@@ -102,8 +75,6 @@ test_model_batch() {
         local error_msg=$(tail -n 5 "$LOG_FILE" | tr '\n' ' ' | sed 's/,/;/g')
         echo "$model_size,$batch_size,FAILED,,$error_msg" >> "$SUMMARY_FILE"
 
-        # Clean up after failed run
-        cleanup_cache "$model_size"
         return 1
     fi
 }

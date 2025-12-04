@@ -2,6 +2,7 @@ import contextlib
 import gc
 import os
 from typing import Any, Callable, Dict, List
+from datetime import timedelta
 
 import torch
 import torch.distributed as dist
@@ -36,7 +37,7 @@ class State:
 
             if int(os.environ.get("LOCAL_RANK", -1)) != -1 and not cpu and torch.cuda.is_available():
                 if not dist.distributed_c10d.is_initialized():
-                    dist.distributed_c10d.init_process_group('nccl')
+                    dist.distributed_c10d.init_process_group('nccl', timeout=timedelta(hours=1.5))
                 self.num_processes = dist.distributed_c10d.get_world_size()
                 self.process_index = dist.distributed_c10d.get_rank()
                 self.local_process_index = int(os.environ.get("LOCAL_RANK", -1))
