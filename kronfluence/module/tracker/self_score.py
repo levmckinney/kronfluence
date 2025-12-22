@@ -33,7 +33,7 @@ class SelfScoreTracker(BaseTracker):
         per_sample_gradient = per_sample_gradient.to(dtype=self.module.score_args.score_dtype)
         preconditioned_gradient.mul_(per_sample_gradient)
         self.module.storage[SELF_SCORE_VECTOR_NAME] = preconditioned_gradient.sum(dim=(1, 2))
-        self.module.storage.demateralize_all()
+        self.module.storage.dematerialize_all()
 
     def register_hooks(self) -> None:
         """Sets up hooks to compute self-influence scores."""
