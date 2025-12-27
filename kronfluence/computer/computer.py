@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from torch import nn
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import FSDPModule, FullyShardedDataParallel as FSDP1
 from torch.nn import DataParallel
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.utils import data
@@ -90,7 +90,7 @@ class Computer(ABC):
             raise TrackedModuleNotFoundError(error_msg)
         self.logger.info(f"Tracking modules with names: {tracked_module_names}.")
 
-        if self.state.use_distributed and not isinstance(model, (DDP, FSDP)):
+        if self.state.use_distributed and not isinstance(model, (DDP, FSDPModule, FSDP1)):
             self.logger.warning(
                 "Creating a DDP module. For custom DDP configuration, "
                 "please manually wrap the model with DDP before passing it in."
@@ -102,7 +102,7 @@ class Computer(ABC):
                 output_device=self.state.local_process_index,
             )
 
-        if cpu and isinstance(model, (DataParallel, DDP, FSDP)):
+        if cpu and isinstance(model, (DataParallel, DDP, FSDPModule)):
             error_msg = (
                 "CPU enforcement is incompatible with DP, DDP, or FSDP wrapped models. "
                 "Please provide an unwrapped model when using `cpu=True`."

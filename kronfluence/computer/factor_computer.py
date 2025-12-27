@@ -305,7 +305,7 @@ class FactorComputer(Computer):
                         per_device_batch_size=per_device_batch_size,
                         dataloader_params=dataloader_params,
                         indices=list(range(start_index, end_index)),
-                        allow_duplicates=False,
+                        allow_duplicates=True,
                     )
                     num_data_processed, covariance_factors = fit_covariance_matrices_with_loader(
                         model=self.model,
@@ -560,16 +560,20 @@ class FactorComputer(Computer):
         if FactorConfig.CONFIGS[factor_args.strategy].requires_eigendecomposition_for_lambda:
             with self.profiler.profile("Load Eigendecomposition"):
                 eigen_factors = load_eigendecomposition(output_dir=load_factors_output_dir)
+
             if load_from_factors_name is not None and self.state.is_main_process:
                 with self.profiler.profile("Save Eigendecomposition"):
                     save_eigendecomposition(output_dir=factors_output_dir, factors=eigen_factors)
+
                 loaded_factor_args = self.load_factor_args(factors_name=load_from_factors_name)
+
                 self._save_arguments(
                     arguments_name=FACTOR_ARGUMENTS_NAME + "_loaded_eigendecomposition",
                     arguments=loaded_factor_args,
                     output_dir=factors_output_dir,
                     overwrite_output_dir=True,
                 )
+
             self.state.wait_for_everyone()
 
         if factor_args.lambda_max_examples is None:
@@ -658,7 +662,7 @@ class FactorComputer(Computer):
                         per_device_batch_size=per_device_batch_size,
                         dataloader_params=dataloader_params,
                         indices=list(range(start_index, end_index)),
-                        allow_duplicates=False,
+                        allow_duplicates=True,
                     )
                     num_data_processed, lambda_factors = fit_lambda_matrices_with_loader(
                         eigen_factors=eigen_factors,

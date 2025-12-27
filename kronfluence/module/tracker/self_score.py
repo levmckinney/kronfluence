@@ -3,7 +3,7 @@ from typing import Tuple
 import torch
 from torch import nn
 
-from kronfluence.factor.config import STORAGE_TYPE, FactorConfig
+from kronfluence.factor.config import FactorConfig
 from kronfluence.module.tracker.base import BaseTracker
 from kronfluence.utils.constants import (
     PRECONDITIONED_GRADIENT_NAME,
@@ -11,28 +11,8 @@ from kronfluence.utils.constants import (
 )
 
 
-def move_storage_to_device(storage: STORAGE_TYPE, target_device: torch.device) -> None:
-    """Moves all stored factors in the storage dictionary to the specified target device.
-
-    Args:
-        storage (STORAGE_TYPE):
-            A dictionary containing stored factors.
-        target_device (torch.device):
-            The target device to move the factors to.
-    """
-    for name, factor in storage.items():
-        if factor is not None:
-            if isinstance(factor, list):
-                for i in range(len(storage[name])):
-                    storage[name][i] = factor[i].to(device=target_device)
-            if isinstance(factor, torch.Tensor):
-                storage[name] = factor.to(device=target_device)
-
-
 class SelfScoreTracker(BaseTracker):
     """Computes self-influence scores for a given module."""
-
-    storage_at_device: bool = False
 
     def _compute_self_score(self, per_sample_gradient: torch.Tensor) -> None:
         """Computes self-influence scores using per-sample gradients.
@@ -41,13 +21,7 @@ class SelfScoreTracker(BaseTracker):
             per_sample_gradient (torch.Tensor):
                 The per-sample gradient tensor for the given batch.
         """
-        if not self.storage_at_device:
-            move_storage_to_device(
-                storage=self.module.storage,
-                target_device=per_sample_gradient.device,
-            )
-            self.storage_at_device = True
-
+        self.module.storage.materialize_all()
         preconditioned_gradient = (
             FactorConfig.CONFIGS[self.module.factor_args.strategy]
             .precondition_gradient(
@@ -59,6 +33,7 @@ class SelfScoreTracker(BaseTracker):
         per_sample_gradient = per_sample_gradient.to(dtype=self.module.score_args.score_dtype)
         preconditioned_gradient.mul_(per_sample_gradient)
         self.module.storage[SELF_SCORE_VECTOR_NAME] = preconditioned_gradient.sum(dim=(1, 2))
+        self.module.storage.dematerialize_all()
 
     def register_hooks(self) -> None:
         """Sets up hooks to compute self-influence scores."""
@@ -132,7 +107,7 @@ class SelfScoreTracker(BaseTracker):
 
     def exist(self) -> bool:
         """Checks if self-influence score is available."""
-        return self.module.storage[SELF_SCORE_VECTOR_NAME] is not None
+        return self.module.storage.is_initialized(SELF_SCORE_VECTOR_NAME)
 
     def accumulate_iterations(self) -> None:
         """Removes self-influence scores from memory after a single iteration."""
@@ -141,17 +116,11 @@ class SelfScoreTracker(BaseTracker):
     def release_memory(self) -> None:
         """Releases self-influence scores from memory."""
         self.clear_all_cache()
-        if self.storage_at_device:
-            move_storage_to_device(storage=self.module.storage, target_device=torch.device("cpu"))
-        self.storage_at_device = False
         del self.module.storage[SELF_SCORE_VECTOR_NAME]
-        self.module.storage[SELF_SCORE_VECTOR_NAME] = None
 
 
 class SelfScoreWithMeasurementTracker(BaseTracker):
     """Computes self-influence scores with measurement for a given module."""
-
-    storage_at_device: bool = False
 
     def _compute_self_measurement_score_with_gradient(self, per_sample_gradient: torch.Tensor) -> None:
         """Computes self-influence scores with measurement using per-sample-gradients.
@@ -193,13 +162,6 @@ class SelfScoreWithMeasurementTracker(BaseTracker):
             if self.cached_activations is None:
                 self._raise_cache_not_found_exception()
 
-            if not self.storage_at_device:
-                move_storage_to_device(
-                    storage=self.module.storage,
-                    target_device=output_gradient.device,
-                )
-                self.storage_at_device = True
-
             handle = self.cached_hooks.pop()
             handle.remove()
             output_gradient = output_gradient.detach().to(dtype=self.module.score_args.score_dtype)
@@ -239,7 +201,7 @@ class SelfScoreWithMeasurementTracker(BaseTracker):
 
     def exist(self) -> bool:
         """Checks if self-influence score is available."""
-        return self.module.storage[SELF_SCORE_VECTOR_NAME] is not None
+        return self.module.storage.is_initialized(SELF_SCORE_VECTOR_NAME)
 
     def accumulate_iterations(self) -> None:
         """Removes self-influence scores from memory after a single iteration."""
@@ -248,8 +210,4 @@ class SelfScoreWithMeasurementTracker(BaseTracker):
     def release_memory(self) -> None:
         """Releases self-influence scores from memory."""
         self.clear_all_cache()
-        if self.storage_at_device:
-            move_storage_to_device(storage=self.module.storage, target_device=torch.device("cpu"))
-        self.storage_at_device = False
         del self.module.storage[SELF_SCORE_VECTOR_NAME]
-        self.module.storage[SELF_SCORE_VECTOR_NAME] = None

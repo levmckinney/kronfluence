@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch import nn
 from transformers import default_data_collator
 
-from examples.wikitext.pipeline import construct_gpt2, get_wikitext_dataset
+from examples.wikitext.pipeline import apply_fsdp_to_gpt2, construct_gpt2, get_wikitext_dataset
 from kronfluence.analyzer import Analyzer, prepare_model
 from kronfluence.arguments import FactorArguments, ScoreArguments
 from kronfluence.task import Task
@@ -28,7 +28,11 @@ def parse_args():
         default="./checkpoints",
         help="A path that is storing the final checkpoint of the model.",
     )
-
+    parser.add_argument(
+        "--apply_fsdp",
+        action="store_true",
+        help="Whether to apply FSDP to the model.",
+    )
     parser.add_argument(
         "--factor_strategy",
         type=str,
@@ -64,6 +68,12 @@ def parse_args():
         type=int,
         default=8,
         help="Batch size for computing query gradients.",
+    )
+    parser.add_argument(
+        "--factor_batch_size",
+        type=int,
+        default=64,
+        help="Batch size for computing factors.",
     )
     parser.add_argument(
         "--compute_per_token_scores",
@@ -152,6 +162,7 @@ def main():
 
     # Prepare the trained model.
     model = construct_gpt2()
+
     checkpoint_path = os.path.join(args.checkpoint_dir, "model.pth")
     if not os.path.isfile(checkpoint_path):
         raise ValueError(f"No checkpoint found at {checkpoint_path}.")
@@ -160,6 +171,9 @@ def main():
     # Define task and prepare model.
     task = LanguageModelingTask()
     model = prepare_model(model, task)
+
+    if args.apply_fsdp:
+        model = apply_fsdp_to_gpt2(model)
 
     if args.use_compile:
         model = torch.compile(model)
@@ -177,17 +191,27 @@ def main():
     # Compute influence factors.
     factors_name = args.factor_strategy
     factor_args = FactorArguments(strategy=args.factor_strategy)
+    
     if args.use_half_precision:
         factor_args = all_low_precision_factor_arguments(strategy=args.factor_strategy, dtype=torch.bfloat16)
         factors_name += "_half"
+    
     if args.use_compile:
         factors_name += "_compile"
+    
+    factor_args.lambda_max_examples = 128
+    factor_args.covariance_max_examples = 128
+
+    if args.apply_fsdp:
+        factor_args.shard_covariance = True
+        factor_args.shard_eigendecomposition = True
+        factor_args.shard_lambda = True
+
     analyzer.fit_all_factors(
         factors_name=factors_name,
         dataset=train_dataset,
-        per_device_batch_size=None,
         factor_args=factor_args,
-        initial_per_device_batch_size_attempt=64,
+        per_device_batch_size=args.factor_batch_size,
         overwrite_output_dir=False,
     )
 

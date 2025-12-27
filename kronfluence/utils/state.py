@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List
 import torch
 import torch.distributed as dist
 from accelerate.state import SharedDict
+from torch.distributed.tensor.device_mesh import init_device_mesh
 from torch import nn
 
 
@@ -34,19 +35,23 @@ class State:
             self.cpu = cpu
 
             if int(os.environ.get("LOCAL_RANK", -1)) != -1 and not cpu and torch.cuda.is_available():
-                if not dist.is_initialized():
-                    dist.init_process_group(backend="nccl")
-                self.num_processes = dist.get_world_size()
-                self.process_index = dist.get_rank()
+                if not dist.distributed_c10d.is_initialized():
+                    dist.distributed_c10d.init_process_group('nccl')
+                self.num_processes = dist.distributed_c10d.get_world_size()
+                self.process_index = dist.distributed_c10d.get_rank()
                 self.local_process_index = int(os.environ.get("LOCAL_RANK", -1))
                 self.device = torch.device("cuda", self.local_process_index)
                 self.n_gpus = torch.cuda.device_count()
+                # Get the default process group
+                self.process_group = dist.distributed_c10d._get_default_group()
                 torch.cuda.set_device(self.device)
+                self.mesh = init_device_mesh(self.device.type, mesh_shape=(self.num_processes,), mesh_dim_names=("dp",))
             else:
                 self.num_processes = 1
                 self.process_index = self.local_process_index = 0
                 self.n_gpus = torch.cuda.device_count()
                 self.device = torch.device("cpu") if self.cpu else self.default_device
+                self.mesh = None
 
     def __repr__(self) -> str:
         """Provides a string representation of the `State` instance.

@@ -6,7 +6,7 @@ import torch.distributed as dist
 from accelerate.utils import find_batch_size, send_to_device
 from safetensors.torch import load_file, save_file
 from torch import autocast, nn
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 from torch.utils import data
 from tqdm import tqdm
 
@@ -14,7 +14,7 @@ from kronfluence.arguments import FactorArguments
 from kronfluence.module.tracked_module import ModuleMode
 from kronfluence.module.utils import (
     get_tracked_module_names,
-    load_factors,
+    load_factor_to_cpu,
     set_attention_mask,
     set_gradient_scale,
     set_mode,
@@ -197,7 +197,7 @@ def fit_covariance_matrices_with_loader(
     num_data_processed = torch.zeros((1,), dtype=torch.int64, requires_grad=False)
     enable_amp = factor_args.amp_dtype is not None
     enable_grad_scaler = enable_amp and factor_args.amp_dtype == torch.float16
-    scaler = GradScaler(init_scale=factor_args.amp_scale, enabled=enable_grad_scaler)
+    scaler = GradScaler(device=state.device.type, init_scale=factor_args.amp_scale, enabled=enable_grad_scaler)
     if enable_grad_scaler:
         gradient_scale = 1.0 / scaler.get_scale()
         set_gradient_scale(model=model, gradient_scale=gradient_scale)
@@ -244,14 +244,15 @@ def fit_covariance_matrices_with_loader(
         num_data_processed = num_data_processed.cpu()
 
     saved_factors: FACTOR_TYPE = {}
-    if state.is_main_process:
-        for factor_name in COVARIANCE_FACTOR_NAMES:
-            factor = load_factors(
-                model=model,
-                factor_name=factor_name,
-                tracked_module_names=tracked_module_names,
-                cpu=True,
-            )
+    for factor_name in COVARIANCE_FACTOR_NAMES:
+        factor = load_factor_to_cpu(
+            model=model,
+            factor_name=factor_name,
+            tracked_module_names=tracked_module_names,
+            main_process_only=True,
+            state=state,
+        )
+        if state.is_main_process:
             if len(factor) == 0:
                 raise ValueError(f"Factor `{factor_name}` has not been computed.")
             saved_factors[factor_name] = factor

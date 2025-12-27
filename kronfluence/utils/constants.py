@@ -30,12 +30,20 @@ NUM_ACTIVATION_COVARIANCE_PROCESSED = "num_activation_covariance_processed"
 NUM_GRADIENT_COVARIANCE_PROCESSED = "num_gradient_covariance_processed"
 
 
-# A list of factors to keep track of when computing covariance matrices.
-COVARIANCE_FACTOR_NAMES = [
+COVARIANCE_MATRIX_NAMES = [
     ACTIVATION_COVARIANCE_MATRIX_NAME,
     GRADIENT_COVARIANCE_MATRIX_NAME,
+]
+
+COVARIANCE_COUNTER_NAMES = [
     NUM_ACTIVATION_COVARIANCE_PROCESSED,
     NUM_GRADIENT_COVARIANCE_PROCESSED,
+]
+
+# A list of factors to keep track of when computing covariance matrices.
+COVARIANCE_FACTOR_NAMES = [
+    *COVARIANCE_MATRIX_NAMES,
+    *COVARIANCE_COUNTER_NAMES,
 ]
 
 

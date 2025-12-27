@@ -9,6 +9,7 @@ from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from kronfluence.arguments import FactorArguments, ScoreArguments
 from kronfluence.module.tracked_module import ModuleMode, TrackedModule
 from kronfluence.task import Task
+from kronfluence.utils.state import State
 from kronfluence.utils.exceptions import IllegalTaskConfigurationError
 
 
@@ -198,11 +199,12 @@ def get_tracked_module_names(model: nn.Module) -> List[str]:
     return [module.name for module in model.modules() if isinstance(module, TrackedModule)]
 
 
-def load_factors(
+def load_factor_to_cpu(
     model: nn.Module,
     factor_name: str,
     tracked_module_names: List[str] = None,
-    cpu: bool = True,
+    main_process_only: bool = True,
+    state: State | None = None,
 ) -> Dict[str, torch.Tensor]:
     """Loads factors with the given name from specified `TrackedModule` instances.
 
@@ -213,13 +215,14 @@ def load_factors(
             The name of the factor to load.
         tracked_module_names (Optional[List[str]]):
             Names of modules to load from. If `None`, loads from all.
-        cpu (bool):
-            If `True`, moves factors to CPU and releases GPU memory.
+        main_process_only (bool):
+            If `True`, only loads factors onto the CPU on the main process.
 
     Returns:
         Dict[str, torch.Tensor]:
             A dictionary of loaded factors, keyed by module name.
     """
+    state = State() if state is None else state
     loaded_factors = {}
     for module in model.modules():
         if isinstance(module, TrackedModule):
@@ -227,11 +230,10 @@ def load_factors(
                 continue
             factor = module.get_factor(factor_name=factor_name)
             if factor is not None:
-                if cpu:
-                    loaded_factors[module.name] = factor.to(device="cpu", copy=True)
-                    module.release_factor(factor_name=factor_name)
-                else:
-                    loaded_factors[module.name] = factor
+                loaded_factors[module.name] = factor.to(device="cpu", copy=True)
+                module.release_factor(factor_name=factor_name)
+            if main_process_only and not state.is_main_process:
+                del loaded_factors[module.name]
     return loaded_factors
 
 

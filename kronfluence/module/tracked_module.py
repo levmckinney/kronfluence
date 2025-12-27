@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 import torch
 from accelerate.utils.dataclasses import BaseEnum
 from torch import nn
+from torch.distributed.tensor import DTensor
 
 from kronfluence.arguments import FactorArguments, ScoreArguments
 from kronfluence.factor.config import FactorConfig
@@ -19,14 +20,16 @@ from kronfluence.module.tracker.self_score import (
 from kronfluence.utils.constants import (
     ACCUMULATED_PRECONDITIONED_GRADIENT_NAME,
     AGGREGATED_GRADIENT_NAME,
-    COVARIANCE_FACTOR_NAMES,
+    COVARIANCE_COUNTER_NAMES,
+    COVARIANCE_MATRIX_NAMES,
     EIGENDECOMPOSITION_FACTOR_NAMES,
-    LAMBDA_FACTOR_NAMES,
+    LAMBDA_MATRIX_NAME,
+    NUM_LAMBDA_PROCESSED,
     PAIRWISE_SCORE_MATRIX_NAME,
     PRECONDITIONED_GRADIENT_NAME,
-    PRECONDITIONED_GRADIENT_TYPE,
     SELF_SCORE_VECTOR_NAME,
 )
+from kronfluence.utils.sharded_storage import ShardedStorage, BufferConfig
 
 
 class ModuleMode(str, BaseEnum):
@@ -119,31 +122,46 @@ class TrackedModule(nn.Module):
 
         self.attention_mask: Optional[torch.Tensor] = None
         self.gradient_scale: float = 1.0
-        self.storage: Dict[str, Optional[Union[torch.Tensor, PRECONDITIONED_GRADIENT_TYPE]]] = {}
         self.einsum_path: Optional[List[int]] = None
-        self._initialize_storage()
+        self.storage: ShardedStorage = ShardedStorage()
+        self._configure_storage()
 
-    def _initialize_storage(self) -> None:
-        """Initializes storage for various factors and scores."""
+
+    def _configure_factor_storage(self) -> None:
+        """Initializes storage for various factors."""
+        shard_covariance = self.factor_args.shard_covariance
+        shard_eigen_decomp = self.factor_args.shard_eigendecomposition
+        shard_lambda = self.factor_args.shard_lambda
 
         # Storage for activation and pseudo-gradient covariance matrices #
-        for covariance_factor_name in COVARIANCE_FACTOR_NAMES:
-            self.storage[covariance_factor_name]: Optional[torch.Tensor] = None
+        for covariance_factor_name in COVARIANCE_MATRIX_NAMES:
+            self.storage.register_buffer(covariance_factor_name, BufferConfig(shard=shard_covariance))
+
+        for covariance_counter_name in COVARIANCE_COUNTER_NAMES:
+            self.storage.register_buffer(covariance_counter_name, BufferConfig(shard=False))
 
         # Storage for eigenvectors and eigenvalues #
         for eigen_factor_name in EIGENDECOMPOSITION_FACTOR_NAMES:
-            self.storage[eigen_factor_name]: Optional[torch.Tensor] = None
+            self.storage.register_buffer(eigen_factor_name, BufferConfig(shard=shard_eigen_decomp))
 
         # Storage for lambda matrices #
-        for lambda_factor_name in LAMBDA_FACTOR_NAMES:
-            self.storage[lambda_factor_name]: Optional[torch.Tensor] = None
+        self.storage.register_buffer(LAMBDA_MATRIX_NAME, BufferConfig(shard=shard_lambda))
+        self.storage.register_buffer(NUM_LAMBDA_PROCESSED, BufferConfig(shard=False))
 
-        # Storage for preconditioned gradients and influence scores #
-        self.storage[AGGREGATED_GRADIENT_NAME]: Optional[torch.Tensor] = None
-        self.storage[PRECONDITIONED_GRADIENT_NAME]: PRECONDITIONED_GRADIENT_TYPE = None
-        self.storage[ACCUMULATED_PRECONDITIONED_GRADIENT_NAME]: PRECONDITIONED_GRADIENT_TYPE = None
-        self.storage[PAIRWISE_SCORE_MATRIX_NAME]: Optional[torch.Tensor] = None
-        self.storage[SELF_SCORE_VECTOR_NAME]: Optional[torch.Tensor] = None
+
+    def _configure_score_storage(self) -> None:
+        """Initializes storage for various scores."""
+         # Storage for preconditioned gradients and influence scores #
+        self.storage.register_buffer(AGGREGATED_GRADIENT_NAME, BufferConfig(shard=False))
+        self.storage.register_buffer(PRECONDITIONED_GRADIENT_NAME, BufferConfig(shard=False))
+        self.storage.register_buffer(ACCUMULATED_PRECONDITIONED_GRADIENT_NAME, BufferConfig(shard=False))
+        self.storage.register_buffer(PAIRWISE_SCORE_MATRIX_NAME, BufferConfig(shard=False))
+        self.storage.register_buffer(SELF_SCORE_VECTOR_NAME, BufferConfig(shard=False))
+
+    def _configure_storage(self) -> None:
+        """Initializes storage for various factors and scores."""
+        self._configure_factor_storage()
+        self._configure_score_storage()
 
     def forward(self, inputs: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
         """Performs a forward pass of the tracked module.
@@ -176,11 +194,13 @@ class TrackedModule(nn.Module):
             device (torch.device):
                 The device to prepare the storage for.
         """
+        self.storage.materialize_all()
         FactorConfig.CONFIGS[self.factor_args.strategy].prepare(
             storage=self.storage,
             score_args=self.score_args,
             device=device,
         )
+        self.storage.dematerialize_all()
 
     def update_factor_args(self, factor_args: FactorArguments) -> None:
         """Updates the factor arguments.
@@ -190,6 +210,7 @@ class TrackedModule(nn.Module):
                 New factor arguments to set.
         """
         self.factor_args = factor_args
+        self._configure_factor_storage()
 
     def update_score_args(self, score_args: ScoreArguments) -> None:
         """Updates the score arguments.
@@ -199,9 +220,10 @@ class TrackedModule(nn.Module):
                 New score arguments to set.
         """
         self.score_args = score_args
+        self._configure_score_storage()
 
     def get_factor(self, factor_name: str) -> Optional[torch.Tensor]:
-        """Retrieves a factor by name from storage.
+        """Retrieves a copy of a factor by name from storage.
 
         Args:
             factor_name (str):
@@ -211,9 +233,20 @@ class TrackedModule(nn.Module):
             Optional[torch.Tensor]:
                 The requested factor, or `None` if not found.
         """
-        if factor_name not in self.storage or self.storage[factor_name] is None:
+        if not self.storage.is_initialized(factor_name):
             return None
-        return self.storage[factor_name]
+        if self.storage.is_materialized(factor_name):
+            tensor = self.storage[factor_name]
+            if isinstance(tensor, DTensor):
+                tensor = tensor.to_local()
+            return tensor.clone()
+        else:
+            self.storage.materialize_buffer(factor_name)
+            tensor = self.storage[factor_name]
+            if isinstance(tensor, DTensor):
+                tensor = tensor.to_local()
+            self.storage.dematerialize_buffer(factor_name)
+            return tensor.clone()
 
     def release_factor(self, factor_name: str) -> None:
         """Releases a factor from memory.
@@ -222,10 +255,7 @@ class TrackedModule(nn.Module):
             factor_name (str):
                 The name of the factor to release.
         """
-        if factor_name not in self.storage or self.storage[factor_name] is None:
-            return None
         del self.storage[factor_name]
-        self.storage[factor_name] = None
 
     def set_factor(self, factor_name: str, factor: Any) -> None:
         """Sets a factor in storage.
@@ -236,8 +266,10 @@ class TrackedModule(nn.Module):
             factor (Any):
                 The factor value to store.
         """
+        del self.storage[factor_name]
         if factor_name in self.storage:
             self.storage[factor_name] = factor
+            self.storage.dematerialize_buffer(factor_name)
 
     def set_mode(self, mode: ModuleMode, release_memory: bool = False) -> None:
         """Sets the operating mode of the `TrackedModule`.

@@ -20,13 +20,11 @@ from kronfluence.utils.constants import (
     NUM_LAMBDA_PROCESSED,
 )
 from kronfluence.utils.exceptions import FactorsNotFoundError
+from kronfluence.utils.sharded_storage import ShardedStorage
 
 
 class CovarianceTracker(BaseTracker):
     """Tracks and computes activation and gradient covariance matrices for a given module."""
-
-    _activation_covariance_initialized: bool = False
-    _gradient_covariance_initialized: bool = False
 
     def _update_activation_covariance_matrix(
         self, input_activation: torch.Tensor, count: Union[torch.Tensor, int]
@@ -39,23 +37,24 @@ class CovarianceTracker(BaseTracker):
             count (int):
                 The number of activations.
         """
-        if not self._activation_covariance_initialized:
-            self.module.storage[NUM_ACTIVATION_COVARIANCE_PROCESSED] = torch.zeros(
+        storage: ShardedStorage = self.module.storage
+        if not storage.is_initialized(ACTIVATION_COVARIANCE_MATRIX_NAME):
+            storage[NUM_ACTIVATION_COVARIANCE_PROCESSED] = torch.zeros(
                 size=(1,),
                 dtype=torch.int64,
                 device=count.device if isinstance(count, torch.Tensor) else None,
                 requires_grad=False,
             )
             dimension = input_activation.size(1)
-            self.module.storage[ACTIVATION_COVARIANCE_MATRIX_NAME] = torch.zeros(
+            storage[ACTIVATION_COVARIANCE_MATRIX_NAME] = torch.zeros(
                 size=(dimension, dimension),
                 dtype=input_activation.dtype,
                 device=input_activation.device,
                 requires_grad=False,
             )
-            self._activation_covariance_initialized = True
-        self.module.storage[NUM_ACTIVATION_COVARIANCE_PROCESSED].add_(count)
-        self.module.storage[ACTIVATION_COVARIANCE_MATRIX_NAME].addmm_(input_activation.t(), input_activation)
+            storage.dematerialize_all()
+        storage[NUM_ACTIVATION_COVARIANCE_PROCESSED] += count
+        storage.accumulate(ACTIVATION_COVARIANCE_MATRIX_NAME, input_activation.t() @ input_activation)
 
     def _update_gradient_covariance_matrix(
         self, output_gradient: torch.Tensor, count: Union[torch.Tensor, int]
@@ -69,28 +68,30 @@ class CovarianceTracker(BaseTracker):
             count (int):
                 The number of gradients.
         """
-        if not self._gradient_covariance_initialized:
+        storage: ShardedStorage = self.module.storage
+        if not storage.is_initialized(GRADIENT_COVARIANCE_MATRIX_NAME):
             # In most cases, `NUM_GRADIENT_COVARIANCE_PROCESSED` and `NUM_ACTIVATION_COVARIANCE_PROCESSED` are
             # identical. However, they may differ when using gradient checkpointing or `torch.compile()`.
-            self.module.storage[NUM_GRADIENT_COVARIANCE_PROCESSED] = torch.zeros(
+            storage[NUM_GRADIENT_COVARIANCE_PROCESSED] = torch.zeros(
                 size=(1,),
                 dtype=torch.int64,
                 device=count.device if isinstance(count, torch.Tensor) else None,
                 requires_grad=False,
             )
             dimension = output_gradient.size(1)
-            self.module.storage[GRADIENT_COVARIANCE_MATRIX_NAME] = torch.zeros(
+            storage[GRADIENT_COVARIANCE_MATRIX_NAME] = torch.zeros(
                 size=(dimension, dimension),
                 dtype=output_gradient.dtype,
                 device=output_gradient.device,
                 requires_grad=False,
             )
-            self._gradient_covariance_initialized = True
-        self.module.storage[NUM_GRADIENT_COVARIANCE_PROCESSED].add_(count)
+            storage.dematerialize_all()
+        storage[NUM_GRADIENT_COVARIANCE_PROCESSED] += count
         alpha = 1
         if self.module.gradient_scale != 1.0:
             alpha = self.module.gradient_scale**2.0
-        self.module.storage[GRADIENT_COVARIANCE_MATRIX_NAME].addmm_(output_gradient.t(), output_gradient, alpha=alpha)
+        output_gradient = alpha * output_gradient
+        storage.accumulate(GRADIENT_COVARIANCE_MATRIX_NAME, output_gradient.t() @ output_gradient)
 
     def register_hooks(self) -> None:
         """Sets up hooks to compute activation and gradient covariance matrices."""
@@ -124,29 +125,33 @@ class CovarianceTracker(BaseTracker):
 
     def exist(self) -> bool:
         """Checks if both activation and gradient covariance matrices are available."""
+        storage: ShardedStorage = self.module.storage
         for covariance_factor_name in COVARIANCE_FACTOR_NAMES:
-            if self.module.storage[covariance_factor_name] is None:
+            if not storage.is_initialized(covariance_factor_name):
                 return False
         return True
 
     def synchronize(self, num_processes: int) -> None:
         """Aggregates covariance matrices across multiple devices or nodes in a distributed setting."""
         del num_processes
+        storage: ShardedStorage = self.module.storage
         if dist.is_initialized() and torch.cuda.is_available() and self.exist():
             for covariance_factor_name in COVARIANCE_FACTOR_NAMES:
-                self.module.storage[covariance_factor_name] = self.module.storage[covariance_factor_name].cuda()
+                if storage.buffer_configs[covariance_factor_name].shard:
+                    continue # Already syncronized
+
+                storage[covariance_factor_name] = storage[covariance_factor_name].cuda()
                 dist.reduce(
-                    tensor=self.module.storage[covariance_factor_name],
+                    tensor=storage[covariance_factor_name],
                     op=dist.ReduceOp.SUM,
                     dst=0,
                 )
 
     def release_memory(self) -> None:
         """Clears all covariance matrices from memory."""
-        self._activation_covariance_initialized = False
-        self._gradient_covariance_initialized = False
+        storage: ShardedStorage = self.module.storage
         for covariance_factor_name in COVARIANCE_FACTOR_NAMES:
-            self.module.storage[covariance_factor_name] = None
+            del storage[covariance_factor_name]
 
 
 class LambdaTracker(BaseTracker):
@@ -154,8 +159,9 @@ class LambdaTracker(BaseTracker):
 
     def _eigendecomposition_results_exist(self) -> bool:
         """Checks if eigendecomposition results are available."""
+        storage: ShardedStorage = self.module.storage
         for eigen_factor_name in EIGENDECOMPOSITION_FACTOR_NAMES:
-            if self.module.storage[eigen_factor_name] is None:
+            if not storage.is_initialized(eigen_factor_name):
                 return False
         return True
 
@@ -168,66 +174,63 @@ class LambdaTracker(BaseTracker):
         """
         batch_size = per_sample_gradient.size(0)
 
-        if self.module.storage[NUM_LAMBDA_PROCESSED] is None:
-            self.module.storage[NUM_LAMBDA_PROCESSED] = torch.zeros(
+        storage: ShardedStorage = self.module.storage
+        requires_eig = FactorConfig.CONFIGS[self.module.factor_args.strategy].requires_eigendecomposition_for_lambda
+
+        if not storage.is_initialized(NUM_LAMBDA_PROCESSED):
+            storage[NUM_LAMBDA_PROCESSED] = torch.zeros(
                 size=(1,),
                 dtype=torch.int64,
                 requires_grad=False,
             )
-            self.module.storage[LAMBDA_MATRIX_NAME] = torch.zeros(
+            storage[LAMBDA_MATRIX_NAME] = torch.zeros(
                 size=(per_sample_gradient.size(1), per_sample_gradient.size(2)),
                 dtype=per_sample_gradient.dtype,
                 device=per_sample_gradient.device,
                 requires_grad=False,
             )
 
-            if FactorConfig.CONFIGS[self.module.factor_args.strategy].requires_eigendecomposition_for_lambda:
+            if requires_eig:
                 if not self._eigendecomposition_results_exist():
                     raise FactorsNotFoundError(
                         f"The strategy {self.module.factor_args.strategy} requires eigendecomposition "
                         f"results for Lambda computations, but they are not found."
                     )
+            storage.dematerialize_all()
 
-                # Move activation and pseudo-gradient eigenvectors to appropriate devices.
-                self.module.storage[ACTIVATION_EIGENVECTORS_NAME] = self.module.storage[
-                    ACTIVATION_EIGENVECTORS_NAME
-                ].to(
-                    dtype=per_sample_gradient.dtype,
-                    device=per_sample_gradient.device,
-                )
-                self.module.storage[GRADIENT_EIGENVECTORS_NAME] = self.module.storage[GRADIENT_EIGENVECTORS_NAME].to(
-                    dtype=per_sample_gradient.dtype,
-                    device=per_sample_gradient.device,
-                )
+        storage[NUM_LAMBDA_PROCESSED].add_(batch_size)
 
-        self.module.storage[NUM_LAMBDA_PROCESSED].add_(batch_size)
-        if FactorConfig.CONFIGS[self.module.factor_args.strategy].requires_eigendecomposition_for_lambda:
+        if requires_eig:
+            storage.materialize_buffer(ACTIVATION_EIGENVECTORS_NAME) # TODO: Overlap communication with computation better!
+            storage.materialize_buffer(GRADIENT_EIGENVECTORS_NAME)
             if self.module.factor_args.use_iterative_lambda_aggregation:
                 # This batch-wise iterative update can be useful when the GPU memory is limited.
                 per_sample_gradient = torch.matmul(
                     per_sample_gradient,
-                    self.module.storage[ACTIVATION_EIGENVECTORS_NAME],
+                    storage[ACTIVATION_EIGENVECTORS_NAME],
                 )
                 for i in range(batch_size):
                     sqrt_lambda = torch.matmul(
-                        self.module.storage[GRADIENT_EIGENVECTORS_NAME].t(),
+                        storage[GRADIENT_EIGENVECTORS_NAME].t(),
                         per_sample_gradient[i],
                     )
-                    self.module.storage[LAMBDA_MATRIX_NAME].add_(sqrt_lambda.square_())
+                    storage.accumulate(LAMBDA_MATRIX_NAME, sqrt_lambda.square_())
             else:
                 per_sample_gradient = (
                     torch.matmul(
-                        self.module.storage[GRADIENT_EIGENVECTORS_NAME].t(),
-                        torch.matmul(per_sample_gradient, self.module.storage[ACTIVATION_EIGENVECTORS_NAME]),
+                        storage[GRADIENT_EIGENVECTORS_NAME].t(),
+                        torch.matmul(per_sample_gradient, storage[ACTIVATION_EIGENVECTORS_NAME]),
                     )
                     .square_()
                     .sum(dim=0)
                 )
-                self.module.storage[LAMBDA_MATRIX_NAME].add_(per_sample_gradient)
+                storage.accumulate(LAMBDA_MATRIX_NAME, per_sample_gradient)
+            storage.dematerialize_buffer(ACTIVATION_EIGENVECTORS_NAME)
+            storage.dematerialize_buffer(GRADIENT_EIGENVECTORS_NAME)
         else:
             # Approximate the eigenbasis as identity.
             per_sample_gradient = per_sample_gradient.square_().sum(dim=0)
-            self.module.storage[LAMBDA_MATRIX_NAME].add_(per_sample_gradient)
+            storage.accumulate(LAMBDA_MATRIX_NAME, per_sample_gradient)
 
     def register_hooks(self) -> None:
         """Sets up hooks to compute lambda matrices."""
@@ -303,19 +306,24 @@ class LambdaTracker(BaseTracker):
 
     def exist(self) -> bool:
         """Checks if Lambda matrices are available."""
+        storage: ShardedStorage = self.module.storage
         for lambda_factor_name in LAMBDA_FACTOR_NAMES:
-            if self.module.storage[lambda_factor_name] is None:
+            if not storage.is_initialized(lambda_factor_name):
                 return False
         return True
 
     def synchronize(self, num_processes: int) -> None:
         """Aggregates Lambda matrices across multiple devices or nodes in a distributed setting."""
         del num_processes
+        storage: ShardedStorage = self.module.storage
         if dist.is_initialized() and torch.cuda.is_available() and self.exist():
             for lambda_factor_name in LAMBDA_FACTOR_NAMES:
-                self.module.storage[lambda_factor_name] = self.module.storage[lambda_factor_name].cuda()
+                if storage.buffer_configs[lambda_factor_name].shard:
+                    continue # Already syncronized
+
+                storage[lambda_factor_name] = storage[lambda_factor_name].cuda()
                 dist.reduce(
-                    tensor=self.module.storage[lambda_factor_name],
+                    tensor=storage[lambda_factor_name],
                     op=dist.ReduceOp.SUM,
                     dst=0,
                 )

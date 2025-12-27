@@ -7,6 +7,8 @@ from torch import nn
 from torch.utils import data
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
+from kronfluence.utils.model import apply_fsdp
+
 MODEL_NAME = "meta-llama/Meta-Llama-3-8B"
 # MODEL_NAME = "EleutherAI/pythia-70m"
 MAX_LENGTH = 512
@@ -25,6 +27,8 @@ def construct_llama3() -> nn.Module:
     )
     return model
 
+def apply_fsdp_to_llama3(model: nn.Module) -> nn.Module:
+    return apply_fsdp(model, sequential=model.model.layers, cpu_offload=False)
 
 def get_openwebtext_dataset(
     indices: List[int] = None,

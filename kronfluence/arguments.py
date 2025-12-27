@@ -80,6 +80,10 @@ class FactorArguments(Arguments):
             "covariance matrix computation."
         },
     )
+    shard_covariance: bool = field(
+        default=False,
+        metadata={"help": "If `True`, shards the covariance matrix across the model's modules (layers)."},
+    )
     activation_covariance_dtype: torch.dtype = field(
         default=torch.float32,
         metadata={"help": "Data type for activation covariance computation."},
@@ -97,6 +101,10 @@ class FactorArguments(Arguments):
             "for numerical stability."
         },
     )
+    shard_eigendecomposition: bool = field(
+        default=False,
+        metadata={"help": "If `True`, shards the eigendecomposition across the model's modules (layers)."},
+    )
 
     # Configuration for fitting Lambda matrices #
     lambda_max_examples: Optional[int] = field(
@@ -112,6 +120,10 @@ class FactorArguments(Arguments):
         metadata={
             "help": "Number of partitions to divide the model's modules (layers) into for Lambda matrix computation."
         },
+    )
+    shard_lambda: bool = field(
+        default=False,
+        metadata={"help": "If `True`, shards the Lambda matrix across the model's modules (layers)."},
     )
     use_iterative_lambda_aggregation: bool = field(
         default=False,
